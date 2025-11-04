@@ -1,4 +1,4 @@
-Coral & VaultBridge：让创作永生，为价值赋能
+# Coral & VaultBridge：让创作永生，为价值赋能
 我们是谁？
 一个将您最爱的知识管理工具（Obsidian）与永久的Web3存储和订阅平台无缝连接的系统。
 
