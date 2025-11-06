@@ -2,6 +2,7 @@ platform/
 platform-sync/
 build/
 node_modules/
+dist/
 .env
 .env.local
 .env.development.local
