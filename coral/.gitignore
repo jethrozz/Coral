@@ -1,0 +1,30 @@
+# Move build artifacts
+build/
+*.log
+
+# Deployment outputs
+deploy_output.json
+deploy_clean.json
+upgrade_output.json
+
+# Keep config templates but ignore specific deployments
+deployed_addresses_*.json
+deployed_addresses_*.ts
+deployment_report_*.md
+test_objects_*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.bak
+
