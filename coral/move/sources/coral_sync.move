@@ -20,7 +20,7 @@ module coral::coral_sync {
         end_epoch: u64,
         created_at: u64,
         updated_at: u64,
-        belong_installment: option::Option<object::ID>, //所属的installment，用于权限控制
+        belong_installments: vector<object::ID>, //所属的installment列表，一个文件可以被多个期刊关联
     }
 
     public fun new_root_directory(name: String, clock: &Clock, ctx: &mut sui::tx_context::TxContext): Directory {
@@ -47,7 +47,7 @@ module coral::coral_sync {
             belong_dir: dir_id,
             created_at: now,
             updated_at: now,
-            belong_installment: option::none(),
+            belong_installments: vector::empty(),
         }
     }
 
@@ -94,7 +94,7 @@ module coral::coral_sync {
             title: _,
             created_at: _,
             updated_at: _,
-            belong_installment: _,
+            belong_installments: _,
         } = file;
         object::delete(id);
     }
@@ -125,15 +125,38 @@ module coral::coral_sync {
         dir.updated_at = now;
     }
 
-    // 设置文件所属的installment（只能设置一次）
-    public(package) fun set_file_installment(file: &mut File, installment_id: object::ID) {
-        assert!(file.belong_installment.is_none(), 9001); // 已经设置过installment
-        file.belong_installment = option::some(installment_id);
+    // 添加文件所属的installment（一个文件可以被多个期刊关联）
+    public(package) fun add_file_installment(file: &mut File, installment_id: object::ID) {
+        // 检查是否已经关联过这个installment，避免重复添加
+        let mut i = 0;
+        let mut found = false;
+        while (i < file.belong_installments.length()) {
+            if (*vector::borrow(&file.belong_installments, i) == installment_id) {
+                found = true;
+                break
+            };
+            i = i + 1;
+        };
+        if (!found) {
+            file.belong_installments.push_back(installment_id);
+        };
     }
 
-    // 获取文件所属的installment
-    public fun get_file_installment(file: &File): option::Option<object::ID> {
-        file.belong_installment
+    // 获取文件所属的installment列表
+    public fun get_file_installments(file: &File): vector<object::ID> {
+        file.belong_installments
+    }
+
+    // 检查文件是否属于某个installment
+    public fun file_belongs_to_installment(file: &File, installment_id: object::ID): bool {
+        let mut i = 0;
+        while (i < file.belong_installments.length()) {
+            if (*vector::borrow(&file.belong_installments, i) == installment_id) {
+                return true
+            };
+            i = i + 1;
+        };
+        false
     }
 
     entry fun seal_approve(_id: vector<u8>, _file: &File) {

@@ -24,6 +24,7 @@ import {
   queryByAddress,
   getObjectsByType,
 } from "@/contract/coral_server";
+import { Transaction } from '@mysten/sui/transactions';
 
 // 获取我的订阅
 export async function getMySubscriptions(
@@ -276,6 +277,125 @@ export async function getUserOwnedColumns(
   return result;
 }
 
+export async function createColumn({
+  address,
+  name,
+  desc,
+  cover_img_url,
+  plan_installment_number,
+  is_rated,
+  update_since_date,
+  update_day_number,
+  update_installment_number,
+  pay_type,
+  fee,
+  subscription_time,
+  
+}: {
+  address: string;
+  name: string;
+  desc: string;
+  cover_img_url: string;
+  plan_installment_number: string;
+  is_rated: boolean;
+  update_since_date: string;
+  update_day_number: string;
+  update_installment_number: string;
+  pay_type: string;
+  fee: number;
+  subscription_time: string;
+}, signAndExecuteTransaction: any) {
+  try {
+    const tx = new Transaction();
+    tx.setSender(address);
+
+    // ========= 1. create_payment_method =========
+    // price (SUI) -> fee (最小单位，* 10^9)
+    const priceNumber = Number(fee);
+    if (Number.isNaN(priceNumber) || priceNumber <= 0) {
+      toast({
+        title: "Error",
+        description: "Invalid price",
+        variant: "destructive",
+      });
+      return;
+    }
+    const fee = BigInt(Math.round(priceNumber * 1e9));
+
+    const payment = tx.moveCall({
+      target: `${packageId}::coral_market::create_payment_method`,
+      arguments: [
+        tx.pure.u8(parseInt(pay_type, 10)), // pay_type: u8
+        tx.pure.string("0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+        ), // 取你实际支持的 coin_type 字符串
+        tx.pure.u64(9), // decimals
+        tx.pure.u64(fee), // fee
+        tx.pure.u64(parseInt(subscription_time, 10) || 0), // subscription_time
+        tx.object(marketConfigId), // &MarketConfig
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+
+    // ========= 2. create_update_method =========
+    const sinceMs = new Date(update_since_date).getTime(); // 毫秒
+    if (!sinceMs || Number.isNaN(sinceMs)) {
+      toast({
+        title: "Error",
+        description: "Invalid start date",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const updateMethod = tx.moveCall({
+      target: `${packageId}::perlite_market::create_update_method`,
+      arguments: [
+        tx.pure.u64(BigInt(sinceMs)), // since: u64 (ms)
+        tx.pure.u64(parseInt(update_day_number, 10) || 0), // day_number
+        tx.pure.u64(parseInt(update_installment_number, 10) || 0), // installment_number
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+
+    // ========= 3. create_column =========
+    tx.moveCall({
+      target: `${packageId}::perlite_market::create_column`,
+      arguments: [
+        tx.pure.string(name), // name
+        tx.pure.string(desc), // desc
+        tx.pure.string(cover_img_url), // cover_img_url
+        tx.object(updateMethod), // UpdateMethod
+        tx.object(payment), // PaymentMethod
+        tx.pure.bool(is_rated), // is_rated
+        tx.pure.u64(parseInt(plan_installment_number, 10) || 0), // plan_installment_number
+        tx.object("0x6"), // Clock
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+
+    // ========= 4. 发送交易 =========
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result) => {
+          alert("Create successful: " + result.digest);
+          setShowCreateModal(false);
+          setTimeout(() => {
+            window.location.reload();
+          }, 800);
+        },
+        onError: (error) => {
+          alert("Failed to create column. " + JSON.stringify(error));
+          console.error("Transaction failed:", error);
+        },
+      },
+    );
+  } catch (error) {
+    alert("Failed to create column. Please try again.");
+    console.error("Failed to create column:", error);
+  }
+}
+
 // 根据ID数组获取专栏详细信息
 async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
   const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
@@ -393,5 +513,155 @@ async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
     console.error("Failed to fetch columns:", error);
     return [];
   }
+}
+
+// 添加期刊（支持1-7个文件）
+export async function addInstallment({
+  columnCapId,
+  columnId,
+  fileIds,
+  packageId,
+  globalConfigId,
+  chain,
+  signAndExecuteTransaction,
+}: {
+  columnCapId: string;
+  columnId: string;
+  fileIds: string[];
+  packageId: string;
+  globalConfigId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  if (!fileIds || fileIds.length === 0) {
+    throw new Error("至少需要选择一个文件");
+  }
+
+  if (fileIds.length > 7) {
+    throw new Error("一个期刊最多只能关联7个文件");
+  }
+
+  const tx = new Transaction();
+  
+  // 根据文件数量调用不同的合约函数
+  const functionName = fileIds.length === 1
+    ? "add_installment"
+    : `add_installment_with_${fileIds.length}_files`;
+
+  // 构建参数：column_cap, column, file1, file2, ..., clock, global_config
+  const args: any[] = [
+    tx.object(columnCapId), // column_cap: &ColumnCap
+    tx.object(columnId), // column: &mut Column
+  ];
+
+  // 添加所有文件对象
+  fileIds.forEach((fileId) => {
+    args.push(tx.object(fileId)); // file: &mut File
+  });
+
+  // 添加 clock 和 global_config
+  args.push(tx.object("0x6")); // clock: &Clock
+  args.push(tx.object(globalConfigId)); // global_config: &GlobalConfig
+
+  tx.moveCall({
+    target: `${packageId}::coral_market::${functionName}`,
+    arguments: args,
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
+}
+
+// 向期刊添加文件
+export async function addFileToInstallment({
+  fileId,
+  installmentId,
+  packageId,
+  signAndExecuteTransaction,
+  chain,
+}: {
+  fileId: string;
+  installmentId: string;
+  packageId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  const tx = new Transaction();
+  
+  tx.moveCall({
+    target: `${packageId}::coral_market::add_file_to_installment`,
+    arguments: [
+      tx.object(fileId), // file: &mut File
+      tx.object(installmentId), // installment: &mut Installment
+    ],
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
+}
+
+// 发布期刊
+export async function publishInstallment({
+  columnCapId,
+  columnId,
+  installmentId,
+  packageId,
+  chain,
+  signAndExecuteTransaction,
+}: {
+  columnCapId: string;
+  columnId: string;
+  installmentId: string;
+  packageId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  const tx = new Transaction();
+  
+  tx.moveCall({
+    target: `${packageId}::coral_market::publish_installment`,
+    arguments: [
+      tx.object(columnCapId), // column_cap: &ColumnCap
+      tx.object(columnId), // column: &mut Column
+      tx.object(installmentId), // installment: &mut Installment
+      tx.object("0x6"), // clock: &Clock
+    ],
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
 }
 

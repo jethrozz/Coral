@@ -14,13 +14,24 @@ import { useToast } from "@/hooks/use-toast"
 import { useI18n } from "@/lib/i18n/context"
 import { Loader2, Info } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { useNetworkVariable } from "@/lib/networkConfig";
+import { Transaction } from '@mysten/sui/transactions';
+import {
+  useCurrentAccount,
+  useSignAndExecuteTransaction,
+} from "@mysten/dapp-kit";
 
 export default function CreateColumnPage() {
   const router = useRouter()
   const { toast } = useToast()
   const [isCreating, setIsCreating] = useState(false)
   const { t, language } = useI18n()
-
+  const currentAccount = useCurrentAccount();
+  const { mutate: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  const chain = useNetworkVariable("chain");
+  const packageId = useNetworkVariable("packageId");
+  const globalConfigId = useNetworkVariable("globalConfigId");
+  const marketConfigId = useNetworkVariable("marketConfigId");
   const [formData, setFormData] = useState({
     // 基本信息
     name: "",
@@ -42,15 +53,22 @@ export default function CreateColumnPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-
+    if (!currentAccount) {
+      toast({
+        title: t("wallet.noconnect"),
+        description: t("wallet.noconnect"),
+        variant: "destructive",
+      });
+      return;
+    }
     // 验证必填字段
     if (!formData.name || !formData.desc || !formData.cover_img_url || 
         !formData.plan_installment_number || !formData.update_since_date ||
         !formData.update_day_number || !formData.update_installment_number ||
         !formData.fee) {
       toast({
-        title: language === "zh" ? "请填写所有必填项" : "Please fill all required fields",
-        description: language === "zh" ? "请完整填写表单后再提交" : "Complete the form before submitting",
+        title: t("createColumn.toastRequiredTitle"),
+        description: t("createColumn.toastRequiredDesc"),
         variant: "destructive",
       })
       return
@@ -72,20 +90,100 @@ export default function CreateColumnPage() {
         ...formData,
         update_since_timestamp: updateSinceTimestamp
       })
-      
+
+
+          // price (SUI) -> fee (最小单位，* 10^9)
+    const priceNumber = Number(formData.fee);
+    if (Number.isNaN(priceNumber) || priceNumber <= 0) {
+      toast({
+        title: "Error",
+        description: "Invalid price",
+        variant: "destructive",
+      });
+      return;
+    }
+      const tx = new Transaction();
+      tx.setSender(currentAccount.address);
+      const price = BigInt(Math.round(priceNumber * 1e9));
+
+      const payment = tx.moveCall({
+      target: `${packageId}::coral_market::create_payment_method`,
+      arguments: [
+        tx.pure.u8(parseInt(formData.pay_type, 10)), // pay_type: u8
+        tx.pure.string("0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+        ), // 取你实际支持的 coin_type 字符串
+        tx.pure.u64(9), // decimals
+        tx.pure.u64(price), // fee
+        tx.pure.u64(parseInt(formData.subscription_time, 10) || 0), // subscription_time
+        tx.object(marketConfigId), // &MarketConfig
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+          // ========= 2. create_update_method =========
+    const sinceMs = new Date(formData.update_since_date).getTime(); // 毫秒
+    if (!sinceMs || Number.isNaN(sinceMs)) {
+      toast({
+        title: "Error",
+        description: "Invalid start date",
+        variant: "destructive",
+      });
+      return;
+    }
+        const updateMethod = tx.moveCall({
+      target: `${packageId}::coral_market::create_update_method`,
+      arguments: [
+        tx.pure.u64(BigInt(sinceMs)), // since: u64 (ms)
+        tx.pure.u64(parseInt(formData.update_day_number, 10) || 0), // day_number
+        tx.pure.u64(parseInt(formData.update_installment_number, 10) || 0), // installment_number
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+
+        // ========= 3. create_column =========
+    tx.moveCall({
+      target: `${packageId}::coral_market::create_column`,
+      arguments: [
+        tx.pure.string(formData.name), // name
+        tx.pure.string(formData.desc), // desc
+        tx.pure.string(formData.cover_img_url), // cover_img_url
+        tx.object(updateMethod), // UpdateMethod
+        tx.object(payment), // PaymentMethod
+        tx.pure.bool(formData.is_rated), // is_rated
+        tx.pure.u64(parseInt(formData.plan_installment_number, 10) || 0), // plan_installment_number
+        tx.object("0x6"), // Clock
+        tx.object(globalConfigId), // &GlobalConfig
+      ],
+    });
+
+        // ========= 4. 发送交易 =========
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result) => {
+          alert("Create successful: " + result.digest);
+          setTimeout(() => {
+            window.location.reload();
+          }, 800);
+        },
+        onError: (error) => {
+          alert("Failed to create column. " + JSON.stringify(error));
+          console.error("Transaction failed:", error);
+        },
+      },
+    );
       await new Promise((resolve) => setTimeout(resolve, 2000))
 
       toast({
-        title: language === "zh" ? "专栏创建成功！" : "Column Created Successfully!",
-        description: language === "zh" ? "你的专栏已经创建，可以开始创作了" : "Your column is now created",
+        title: t("createColumn.toastSuccessTitle"),
+        description: t("createColumn.toastSuccessDesc"),
       })
 
       router.push("/my-columns")
     } catch (error) {
       console.error("创建专栏失败:", error)
       toast({
-        title: language === "zh" ? "创建失败" : "Creation Failed",
-        description: language === "zh" ? "创建专栏时出错，请重试" : "Error creating column, please try again",
+        title: t("createColumn.toastFailedTitle"),
+        description: t("createColumn.toastFailedDesc"),
         variant: "destructive",
       })
     } finally {
@@ -102,12 +200,10 @@ export default function CreateColumnPage() {
           {/* Header */}
           <div className="space-y-2">
             <h1 className="text-3xl md:text-4xl font-bold">
-              {language === "zh" ? "创建新专栏" : "Create New Column"}
+              {t("createColumn.title")}
             </h1>
             <p className="text-muted-foreground">
-              {language === "zh" 
-                ? "填写专栏信息，设置更新和支付方式" 
-                : "Fill in column details and set update and payment methods"}
+              {t("createColumn.pageSubtitle")}
             </p>
           </div>
 
@@ -115,19 +211,19 @@ export default function CreateColumnPage() {
             {/* 基本信息 */}
             <Card className="hover:border-primary/50 transition-colors">
               <CardHeader>
-                <CardTitle>{language === "zh" ? "基本信息" : "Basic Information"}</CardTitle>
+                <CardTitle>{t("createColumn.basicInfo")}</CardTitle>
                 <CardDescription>
-                  {language === "zh" ? "设置专栏的基本信息" : "Set basic column information"}
+                  {t("createColumn.basicInfoDesc")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
                   <Label htmlFor="name">
-                    {language === "zh" ? "专栏名称" : "Column Name"} <span className="text-destructive">*</span>
+                    {t("createColumn.columnTitle")} <span className="text-destructive">*</span>
                   </Label>
                   <Input
                     id="name"
-                    placeholder={language === "zh" ? "输入专栏名称" : "Enter column name"}
+                    placeholder={t("createColumn.columnTitlePlaceholder")}
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   />
@@ -135,25 +231,23 @@ export default function CreateColumnPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="desc">
-                    {language === "zh" ? "专栏描述" : "Description"} <span className="text-destructive">*</span>
+                    {t("createColumn.columnDescription")} <span className="text-destructive">*</span>
                   </Label>
                   <Textarea
                     id="desc"
-                    placeholder={language === "zh" ? "介绍你的专栏内容和特色" : "Describe your column content and features"}
+                    placeholder={t("createColumn.columnDescriptionPlaceholder")}
                     rows={5}
                     value={formData.desc}
                     onChange={(e) => setFormData({ ...formData, desc: e.target.value })}
                   />
                   <p className="text-xs text-muted-foreground">
-                    {language === "zh"
-                      ? "详细的描述可以帮助读者更好地了解你的专栏"
-                      : "Detailed description helps readers understand your column"}
+                    {t("createColumn.columnDescriptionHelp")}
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="cover_img_url">
-                    {language === "zh" ? "封面图片地址" : "Cover Image URL"} <span className="text-destructive">*</span>
+                    {t("createColumn.coverImageUrl")} <span className="text-destructive">*</span>
                   </Label>
                   <Input
                     id="cover_img_url"
@@ -163,22 +257,20 @@ export default function CreateColumnPage() {
                     onChange={(e) => setFormData({ ...formData, cover_img_url: e.target.value })}
                   />
                   <p className="text-xs text-muted-foreground">
-                    {language === "zh"
-                      ? "推荐使用 16:9 比例的图片，支持 https 链接"
-                      : "Recommended 16:9 ratio, supports https links"}
+                    {t("createColumn.coverImageUrlHelp")}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="plan_installment_number">
-                      {language === "zh" ? "计划发布期数" : "Planned Issues"} <span className="text-destructive">*</span>
+                      {t("createColumn.planIssues")} <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="plan_installment_number"
                       type="number"
                       min="1"
-                      placeholder={language === "zh" ? "如：12" : "e.g., 12"}
+                      placeholder={t("createColumn.planIssuesPlaceholder")}
                       value={formData.plan_installment_number}
                       onChange={(e) => setFormData({ ...formData, plan_installment_number: e.target.value })}
                     />
@@ -186,7 +278,7 @@ export default function CreateColumnPage() {
 
                   <div className="space-y-2">
                     <Label htmlFor="is_rated">
-                      {language === "zh" ? "是否支持打分" : "Allow Rating"}
+                      {t("createColumn.isRatedLabel")}
                     </Label>
                     <Select
                       value={formData.is_rated ? "true" : "false"}
@@ -196,8 +288,8 @@ export default function CreateColumnPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="false">{language === "zh" ? "不支持" : "No"}</SelectItem>
-                        <SelectItem value="true">{language === "zh" ? "支持" : "Yes"}</SelectItem>
+                        <SelectItem value="false">{t("createColumn.isRatedNo")}</SelectItem>
+                        <SelectItem value="true">{t("createColumn.isRatedYes")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -209,13 +301,11 @@ export default function CreateColumnPage() {
             <Card className="hover:border-primary/50 transition-colors">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  {language === "zh" ? "更新方式" : "Update Method"}
+                  {t("createColumn.updateMethodTitle")}
                   <Badge variant="outline" className="text-xs border-primary text-primary">UpdateMethod</Badge>
                 </CardTitle>
                 <CardDescription>
-                  {language === "zh" 
-                    ? "设置专栏的更新频率和规则" 
-                    : "Set column update frequency and rules"}
+                  {t("createColumn.updateMethodDesc")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -223,16 +313,14 @@ export default function CreateColumnPage() {
                   <div className="flex gap-2">
                     <Info className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
                     <div className="text-sm text-foreground">
-                      {language === "zh"
-                        ? "更新规则：从开始时间起，每隔指定天数更新指定期数。例如：从2024年1月1日起，每7天更新1期。"
-                        : "Update rule: From start time, update specified number of issues every specified days. E.g., from Jan 1, 2024, update 1 issue every 7 days."}
+                      {t("createColumn.updateRuleHint")}
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="update_since_date">
-                    {language === "zh" ? "开始时间" : "Start Time"} <span className="text-destructive">*</span>
+                    {t("createColumn.updateStartTime")} <span className="text-destructive">*</span>
                   </Label>
                   <Input
                     id="update_since_date"
@@ -242,44 +330,42 @@ export default function CreateColumnPage() {
                     className="block w-full"
                   />
                   <p className="text-xs text-muted-foreground">
-                    {language === "zh"
-                      ? "选择专栏的更新开始时间"
-                      : "Select the start time for column updates"}
+                    {t("createColumn.updateStartTimeHelp")}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="update_day_number">
-                      {language === "zh" ? "更新间隔（天）" : "Update Interval (days)"} <span className="text-destructive">*</span>
+                      {t("createColumn.updateIntervalDays")} <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="update_day_number"
                       type="number"
                       min="1"
-                      placeholder={language === "zh" ? "如：7" : "e.g., 7"}
+                      placeholder={t("createColumn.updateIntervalDaysPlaceholder")}
                       value={formData.update_day_number}
                       onChange={(e) => setFormData({ ...formData, update_day_number: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {language === "zh" ? "每多少天更新一次" : "Days between updates"}
+                      {t("createColumn.updateIntervalDaysHelp")}
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="update_installment_number">
-                      {language === "zh" ? "每次更新期数" : "Issues per Update"} <span className="text-destructive">*</span>
+                      {t("createColumn.updateIssuesPerUpdate")} <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="update_installment_number"
                       type="number"
                       min="1"
-                      placeholder={language === "zh" ? "如：1" : "e.g., 1"}
+                      placeholder={t("createColumn.updateIssuesPerUpdatePlaceholder")}
                       value={formData.update_installment_number}
                       onChange={(e) => setFormData({ ...formData, update_installment_number: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {language === "zh" ? "每次更新多少期" : "Number of issues per update"}
+                      {t("createColumn.updateIssuesPerUpdateHelp")}
                     </p>
                   </div>
                 </div>
@@ -290,19 +376,17 @@ export default function CreateColumnPage() {
             <Card className="hover:border-accent/50 transition-colors">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  {language === "zh" ? "支付方式" : "Payment Method"}
+                  {t("createColumn.paymentMethodTitle")}
                   <Badge variant="outline" className="text-xs border-accent text-accent">PaymentMethod</Badge>
                 </CardTitle>
                 <CardDescription>
-                  {language === "zh" 
-                    ? "设置专栏的订阅价格和支付模式" 
-                    : "Set subscription price and payment mode"}
+                  {t("createColumn.paymentMethodDesc")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
                   <Label htmlFor="pay_type">
-                    {language === "zh" ? "支付类型" : "Payment Type"} <span className="text-destructive">*</span>
+                    {t("createColumn.payTypeLabel")} <span className="text-destructive">*</span>
                   </Label>
                   <Select
                     value={formData.pay_type}
@@ -313,61 +397,55 @@ export default function CreateColumnPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="0">
-                        {language === "zh" ? "买断 (一次性付费)" : "Buy Out (One-time Payment)"}
+                        {t("createColumn.payTypeBuyOut")}
                       </SelectItem>
                       <SelectItem value="1">
-                        {language === "zh" ? "质押 (质押代币)" : "Stake (Stake Tokens)"}
+                        {t("createColumn.payTypeStake")}
                       </SelectItem>
                       <SelectItem value="2">
-                        {language === "zh" ? "订阅 (周期性付费)" : "Subscribe (Recurring Payment)"}
+                        {t("createColumn.payTypeSubscribe")}
                       </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    {language === "zh"
-                      ? "选择适合你专栏的支付模式"
-                      : "Choose a payment mode suitable for your column"}
+                    {t("createColumn.payTypeHelp")}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="fee">
-                      {language === "zh" ? "价格 (SUI)" : "Price (SUI)"} <span className="text-destructive">*</span>
+                      {t("createColumn.priceLabel")} <span className="text-destructive">*</span>
                     </Label>
                     <Input
                       id="fee"
                       type="number"
                       step="0.001"
                       min="0"
-                      placeholder={language === "zh" ? "如：0.5" : "e.g., 0.5"}
+                      placeholder={t("createColumn.pricePlaceholder")}
                       value={formData.fee}
                       onChange={(e) => setFormData({ ...formData, fee: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {language === "zh"
-                        ? "设定合理的价格，精度为 9 位小数"
-                        : "Set reasonable price, precision to 9 decimals"}
+                      {t("createColumn.priceHelp")}
                     </p>
                   </div>
 
                   {(formData.pay_type === "1" || formData.pay_type === "2") && (
                     <div className="space-y-2">
                       <Label htmlFor="subscription_time">
-                        {language === "zh" ? "订阅时长（天）" : "Subscription Period (days)"} <span className="text-destructive">*</span>
+                        {t("createColumn.subscriptionPeriodLabel")} <span className="text-destructive">*</span>
                       </Label>
                       <Input
                         id="subscription_time"
                         type="number"
                         min="1"
-                        placeholder={language === "zh" ? "如：30" : "e.g., 30"}
+                        placeholder={t("createColumn.subscriptionPeriodPlaceholder")}
                         value={formData.subscription_time}
                         onChange={(e) => setFormData({ ...formData, subscription_time: e.target.value })}
                       />
                       <p className="text-xs text-muted-foreground">
-                        {language === "zh"
-                          ? "质押或订阅的有效时长"
-                          : "Valid period for stake or subscription"}
+                        {t("createColumn.subscriptionPeriodHelp")}
                       </p>
                     </div>
                   )}
@@ -375,22 +453,16 @@ export default function CreateColumnPage() {
 
                 <div className="rounded-lg bg-accent/10 border border-accent/20 p-4">
                   <div className="text-sm">
-                    <p className="font-medium mb-2 text-accent">{language === "zh" ? "💡 定价建议" : "💡 Pricing Tips"}</p>
+                    <p className="font-medium mb-2 text-accent">{t("createColumn.pricingTipsTitle")}</p>
                     <ul className="space-y-1.5 ml-4 text-foreground/80">
                       <li>
-                        {language === "zh"
-                          ? "• 买断：适合有明确期数的专栏，用户一次性付费获得所有内容"
-                          : "• Buy Out: Suitable for columns with fixed issues, one-time payment for all content"}
+                        {t("createColumn.pricingTipsBuyOut")}
                       </li>
                       <li>
-                        {language === "zh"
-                          ? "• 质押：用户质押代币，到期后可赎回，适合长期订阅"
-                          : "• Stake: Users stake tokens, redeemable after expiry, suitable for long-term"}
+                        {t("createColumn.pricingTipsStake")}
                       </li>
                       <li>
-                        {language === "zh"
-                          ? "• 订阅：按周期付费，灵活度高，适合持续更新的专栏"
-                          : "• Subscribe: Periodic payment, flexible, suitable for ongoing updates"}
+                        {t("createColumn.pricingTipsSubscribe")}
                       </li>
                     </ul>
                   </div>
@@ -407,7 +479,7 @@ export default function CreateColumnPage() {
                 onClick={() => router.back()}
                 disabled={isCreating}
               >
-                {language === "zh" ? "取消" : "Cancel"}
+                {t("createColumn.cancel")}
               </Button>
               <Button 
                 type="submit" 
@@ -417,10 +489,10 @@ export default function CreateColumnPage() {
                 {isCreating ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {language === "zh" ? "创建中..." : "Creating..."}
+                    {t("createColumn.creating")}
                   </>
                 ) : (
-                  language === "zh" ? "创建专栏" : "Create Column"
+                  t("createColumn.create")
                 )}
               </Button>
             </div>
@@ -429,35 +501,15 @@ export default function CreateColumnPage() {
           {/* 创作建议 */}
           <Card className="bg-muted/50">
             <CardHeader>
-              <CardTitle className="text-lg">{language === "zh" ? "创作建议" : "Tips"}</CardTitle>
+              <CardTitle className="text-lg">{t("createColumn.tipsTitle")}</CardTitle>
             </CardHeader>
             <CardContent>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                <li>
-                  {language === "zh"
-                    ? "• 选择一个清晰明确的主题，让读者容易理解"
-                    : "• Choose a clear theme for easy understanding"}
-                </li>
-                <li>
-                  {language === "zh"
-                    ? "• 定期更新内容，保持与订阅者的互动"
-                    : "• Update regularly and engage with subscribers"}
-                </li>
-                <li>
-                  {language === "zh"
-                    ? "• 价格设置要合理，可以参考同类专栏"
-                    : "• Set reasonable prices, refer to similar columns"}
-                </li>
-                <li>
-                  {language === "zh"
-                    ? "• 用高质量的内容吸引和留住订阅者"
-                    : "• Attract and retain subscribers with quality content"}
-                </li>
-                <li>
-                  {language === "zh"
-                    ? "• 制定合理的更新计划，避免过于频繁或稀疏"
-                    : "• Plan reasonable update schedule, avoid too frequent or sparse"}
-                </li>
+                <li>{t("createColumn.tipsItem1")}</li>
+                <li>{t("createColumn.tipsItem2")}</li>
+                <li>{t("createColumn.tipsItem3")}</li>
+                <li>{t("createColumn.tipsItem4")}</li>
+                <li>{t("createColumn.tipsItem5")}</li>
               </ul>
             </CardContent>
           </Card>

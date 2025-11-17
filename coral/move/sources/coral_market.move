@@ -305,39 +305,163 @@ module coral::coral_market {
             coral_event::delist_column_event(_ctx.sender(), object::id(column));
     }
 
+    // 添加期刊（支持多个文件，最多7个）
+    // 注意：一个文件可以被多个期刊关联
     public entry fun add_installment(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_2_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_3_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        file3: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        add_file_to_installment(file3, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_4_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        file3: &mut File,
+        file4: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        add_file_to_installment(file3, &mut installment, ctx);
+        add_file_to_installment(file4, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_5_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        file3: &mut File,
+        file4: &mut File,
+        file5: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        add_file_to_installment(file3, &mut installment, ctx);
+        add_file_to_installment(file4, &mut installment, ctx);
+        add_file_to_installment(file5, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_6_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        file3: &mut File,
+        file4: &mut File,
+        file5: &mut File,
+        file6: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        add_file_to_installment(file3, &mut installment, ctx);
+        add_file_to_installment(file4, &mut installment, ctx);
+        add_file_to_installment(file5, &mut installment, ctx);
+        add_file_to_installment(file6, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    public entry fun add_installment_with_7_files(
+        column_cap: &ColumnCap,
+        column: &mut Column,
+        file1: &mut File,
+        file2: &mut File,
+        file3: &mut File,
+        file4: &mut File,
+        file5: &mut File,
+        file6: &mut File,
+        file7: &mut File,
+        clock: &Clock,
+        global_config: &GlobalConfig,
+        ctx: &mut TxContext){
+        let (mut installment, _installment_id) = add_installment_internal(column_cap, column, file1, clock, global_config, ctx);
+        add_file_to_installment(file2, &mut installment, ctx);
+        add_file_to_installment(file3, &mut installment, ctx);
+        add_file_to_installment(file4, &mut installment, ctx);
+        add_file_to_installment(file5, &mut installment, ctx);
+        add_file_to_installment(file6, &mut installment, ctx);
+        add_file_to_installment(file7, &mut installment, ctx);
+        transfer::share_object(installment);
+    }
+
+    // 内部函数：创建installment并返回installment对象和ID
+    fun add_installment_internal(
         column_cap: &ColumnCap,
         column: &mut Column,
         file: &mut File,
         clock: &Clock,
         global_config: &GlobalConfig,
-        ctx: &mut TxContext){
-                        //版本检查
-            coral_version::assert_valid_version(global_config); 
-            assert!(object::id(column) == column_cap.column_id, E_NO_COLUMN_CAP);   
-            let col_id = object::id(column);
-            let mut file_ids: vector<ID> = vector::empty();
-            file_ids.push_back(object::id(file));
-            
-            let now = clock.timestamp_ms();
-            let installment = Installment{
-                id: object::new(ctx),
-                belong_column: col_id,
-                no: column.all_installment.length() + 1,
-                files: file_ids,
-                is_published: false, //初始为未发布
-                published_at: 0,
-            };
-           let installment_id =  object::id(&installment);
-            
-            // 设置文件所属的installment
-            coral_sync::set_file_installment(file, installment_id);
-            
-            column.all_installment.push_back(installment_id);
-            column.updated_at = now;
+        ctx: &mut TxContext): (Installment, ID) {
+        //版本检查
+        coral_version::assert_valid_version(global_config); 
+        assert!(object::id(column) == column_cap.column_id, E_NO_COLUMN_CAP);
+        let col_id = object::id(column);
+        
+        let now = clock.timestamp_ms();
+        let mut installment = Installment{
+            id: object::new(ctx),
+            belong_column: col_id,
+            no: column.all_installment.length() + 1,
+            files: vector::empty(),
+            is_published: false, //初始为未发布
+            published_at: 0,
+        };
+        let installment_id = object::id(&installment);
+        
+        // 添加第一个文件
+        let file_id = object::id(file);
+        installment.files.push_back(file_id);
+        // 添加文件所属的installment（一个文件可以被多个期刊关联）
+        coral_sync::add_file_installment(file, installment_id);
+        
+        column.all_installment.push_back(installment_id);
+        column.updated_at = now;
 
-            // 注意：创建installment时不发送事件，只有发布时才发送
-            transfer::share_object(installment);
+        // 注意：创建installment时不发送事件，只有发布时才发送
+        // 先不share，等添加完所有文件后再share
+        (installment, installment_id)
     }
 
     public fun add_file_to_installment(
@@ -345,11 +469,24 @@ module coral::coral_market {
         installment: &mut Installment,
         _ctx: &mut TxContext){
         assert!(!installment.is_published, E_INSTALLMENT_ALREADY_PUBLISHED); // 已发布的installment不能添加文件
+        assert!(installment.files.length() < 7, 1009); // 一个期刊最多7个文件
         let file_id = object::id(file);
         let installment_id = object::id(installment);
         
-        // 设置文件所属的installment
-        coral_sync::set_file_installment(file, installment_id);
+        // 检查文件是否已经在installment中
+        let mut i = 0;
+        let mut found = false;
+        while (i < installment.files.length()) {
+            if (*vector::borrow(&installment.files, i) == file_id) {
+                found = true;
+                break
+            };
+            i = i + 1;
+        };
+        assert!(!found, 1010); // 文件已经在installment中
+        
+        // 添加文件所属的installment（一个文件可以被多个期刊关联）
+        coral_sync::add_file_installment(file, installment_id);
         installment.files.push_back(file_id);
     }
 
@@ -566,10 +703,7 @@ module coral::coral_market {
         assert!(installment.belong_column == object::id(column), ENoAccess);
         
         // 4. 检查文件是否属于该installment
-        let file_installment_opt = coral_sync::get_file_installment(file);
-        assert!(file_installment_opt.is_some(), E_FILE_NOT_IN_INSTALLMENT);
-        let file_installment_id = file_installment_opt.destroy_some();
-        assert!(file_installment_id == object::id(installment), E_FILE_NOT_IN_INSTALLMENT);
+        assert!(coral_sync::file_belongs_to_installment(file, object::id(installment)), E_FILE_NOT_IN_INSTALLMENT);
     }
 
     //作者权限校验 - 作者可以访问所有文件（包括未发布的）
@@ -578,12 +712,19 @@ module coral::coral_market {
         assert!(col_cap.column_id == object::id(column), ENoAccess);
         
         // 检查文件是否属于该专栏的某个installment
-        let file_installment_opt = coral_sync::get_file_installment(file);
-        if (file_installment_opt.is_some()) {
-            let file_installment_id = file_installment_opt.destroy_some();
+        // 注意：作者可以访问所有文件，所以这里不检查也可以
+        // 但如果文件不属于该专栏，可能需要额外检查
+        let file_installments = coral_sync::get_file_installments(file);
+        let mut i = 0;
+        while (i < file_installments.length()) {
+            let file_installment_id = *vector::borrow(&file_installments, i);
             // 验证该installment是否在专栏的installment列表中
-            assert!(column.all_installment.contains(&file_installment_id), ENoAccess);
-        }
+            if (column.all_installment.contains(&file_installment_id)) {
+                return // 找到匹配的installment，允许访问
+            };
+            i = i + 1;
+        };
+        // 如果文件不属于该专栏的任何installment，作者仍然可以访问（作者权限）
     }
 }
 

@@ -110,32 +110,76 @@ DEPLOY_OUTPUT=$(sui client publish --gas-budget 500000000 --json 2>&1)
 echo "$DEPLOY_OUTPUT" > deploy_output.json
 
 # 提取 JSON 部分（新版本 Sui CLI 在前面有编译输出）
-DEPLOY_JSON=$(echo "$DEPLOY_OUTPUT" | grep -a "^{" | head -1)
+# 方法1: 使用 awk 提取从第一个 { 开始到文件结束的内容（JSON可能是多行的）
+# 注意：不要使用 head -1，因为JSON是多行的
+DEPLOY_JSON=$(echo "$DEPLOY_OUTPUT" | awk '/^{/,0')
+
+# 如果方法1失败，尝试从保存的文件中提取
+if ! echo "$DEPLOY_JSON" | jq empty > /dev/null 2>&1; then
+    if [ -f "deploy_output.json" ]; then
+        # 从文件中提取JSON（从第一个 { 开始到文件结束）
+        DEPLOY_JSON=$(awk '/^{/,0' deploy_output.json)
+    fi
+fi
+
+# 如果还是失败，尝试使用 sed 提取JSON块
+if ! echo "$DEPLOY_JSON" | jq empty > /dev/null 2>&1; then
+    if [ -f "deploy_output.json" ]; then
+        # 找到第一个 { 的行号，然后提取从那里到文件结束
+        FIRST_BRACE_LINE=$(grep -n "^{" deploy_output.json | head -1 | cut -d: -f1)
+        if [ -n "$FIRST_BRACE_LINE" ]; then
+            DEPLOY_JSON=$(sed -n "${FIRST_BRACE_LINE},\$p" deploy_output.json)
+        fi
+    fi
+fi
 
 # 检查部署是否成功
+# 首先验证JSON是否有效
+if ! echo "$DEPLOY_JSON" | jq empty > /dev/null 2>&1; then
+    print_error "无法解析部署输出JSON"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+fi
+
+# 检查部署状态（支持多种可能的JSON结构）
 if echo "$DEPLOY_JSON" | jq -e '.effects.status.status == "success"' > /dev/null 2>&1; then
     print_success "合约部署成功！"
 elif echo "$DEPLOY_JSON" | jq -e '.status.status == "success"' > /dev/null 2>&1; then
     print_success "合约部署成功！"
+elif echo "$DEPLOY_JSON" | jq -e '.effects.status == "success"' > /dev/null 2>&1; then
+    print_success "合约部署成功！"
+elif echo "$DEPLOY_JSON" | jq -e '.status == "success"' > /dev/null 2>&1; then
+    print_success "合约部署成功！"
 else
-    print_error "合约部署失败"
-    if [ -n "$DEPLOY_JSON" ]; then
-        echo "$DEPLOY_JSON" | jq '.'
+    # 检查是否有错误信息
+    ERROR_MSG=$(echo "$DEPLOY_JSON" | jq -r '.error // .message // empty' 2>/dev/null)
+    if [ -n "$ERROR_MSG" ]; then
+        print_error "合约部署失败: $ERROR_MSG"
     else
-        echo "$DEPLOY_OUTPUT"
+        print_error "合约部署失败（状态检查未通过）"
     fi
+    
+    # 显示详细的错误信息
+    print_info "部署输出详情:"
+    echo "$DEPLOY_JSON" | jq '.' 2>/dev/null || echo "$DEPLOY_OUTPUT"
     exit 1
 fi
 
-# 提取重要信息
-PACKAGE_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.type == "published") | .packageId')
-ADMIN_CAP_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("CoralAdminCap")) | .objectId')
-VERSION_ADMIN_CAP_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("CoralVersionAdminCap")) | .objectId')
-GLOBAL_CONFIG_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("GlobalConfig")) | .objectId')
-MARKET_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("Market") and (.objectType | contains("MarketConfig") | not)) | .objectId')
-MARKET_CONFIG_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("MarketConfig")) | .objectId')
-DISPLAY_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("Display")) | .objectId')
-PUBLISHER_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType | contains("Publisher")) | .objectId')
+# 提取重要信息（添加null检查以避免错误）
+PACKAGE_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.type == "published") | .packageId' | head -1)
+ADMIN_CAP_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("CoralAdminCap"))) | .objectId' | head -1)
+VERSION_ADMIN_CAP_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("CoralVersionAdminCap"))) | .objectId' | head -1)
+GLOBAL_CONFIG_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("GlobalConfig"))) | .objectId' | head -1)
+MARKET_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("Market")) and (.objectType | contains("MarketConfig") | not)) | .objectId' | head -1)
+MARKET_CONFIG_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("MarketConfig"))) | .objectId' | head -1)
+DISPLAY_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("Display"))) | .objectId' | head -1)
+PUBLISHER_ID=$(echo "$DEPLOY_JSON" | jq -r '.objectChanges[] | select(.objectType != null and (.objectType | contains("Publisher"))) | .objectId' | head -1)
+
+# 验证关键信息是否提取成功
+if [ -z "$PACKAGE_ID" ] || [ "$PACKAGE_ID" == "null" ]; then
+    print_error "无法提取 Package ID"
+    exit 1
+fi
 
 # 打印部署信息
 print_success "==================== 部署信息 ===================="
