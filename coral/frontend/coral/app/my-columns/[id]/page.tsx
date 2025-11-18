@@ -386,11 +386,11 @@ export default function ColumnManagePage() {
                     </span>
                     <span>·</span>
                     <span>
-                      {publishedInstallments.length} {language === "zh" ? "已发布" : "Published"}
+                      {publishedInstallments.length} {t("myColumns.published")}
                     </span>
                     <span>·</span>
                     <span>
-                      {draftInstallments.length} {language === "zh" ? "未发布" : "Draft"}
+                      {draftInstallments.length} {t("myColumns.draft")}
                     </span>
                   </div>
                 </div>
@@ -409,11 +409,11 @@ export default function ColumnManagePage() {
           {/* 操作栏 */}
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold">
-              {language === "zh" ? "期刊管理" : "Installment Management"}
+              {t("myColumns.installmentManagement")}
             </h2>
             <Button onClick={openAddInstallment}>
               <Plus className="mr-2 h-4 w-4" />
-              {language === "zh" ? "新增期刊" : "Add Installment"}
+              {t("myColumns.addInstallment")}
             </Button>
           </div>
 
@@ -422,7 +422,7 @@ export default function ColumnManagePage() {
             <div className="space-y-4">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-green-500" />
-                {language === "zh" ? "已发布期刊" : "Published Installments"}
+                {t("myColumns.publishedInstallments")}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {publishedInstallments
@@ -433,24 +433,24 @@ export default function ColumnManagePage() {
                         <div className="flex items-start justify-between">
                           <div>
                             <CardTitle className="text-lg">
-                              {language === "zh" ? "第" : "Issue "}
+                              {t("myColumns.issue")}
                               {installment.no}
-                              {language === "zh" ? "期" : ""}
+                              {t("myColumns.period")}
                             </CardTitle>
                             <CardDescription className="mt-1">
                               {installment.files.length}{" "}
-                              {language === "zh" ? "个文件" : "files"}
+                              {t("myColumns.files")}
                             </CardDescription>
                           </div>
                           <Badge variant="default" className="bg-green-500">
-                            {language === "zh" ? "已发布" : "Published"}
+                            {t("myColumns.published")}
                           </Badge>
                         </div>
                       </CardHeader>
                       <CardContent>
                         {installment.published_at && (
                           <p className="text-xs text-muted-foreground">
-                            {language === "zh" ? "发布时间" : "Published"}:{" "}
+                            {t("myColumns.publishedAt")}:{" "}
                             {new Date(installment.published_at).toLocaleDateString(
                               language === "zh" ? "zh-CN" : "en-US"
                             )}
@@ -468,7 +468,7 @@ export default function ColumnManagePage() {
             <div className="space-y-4">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <XCircle className="h-5 w-5 text-orange-500" />
-                {language === "zh" ? "未发布期刊" : "Draft Installments"}
+                {t("myColumns.draftInstallments")}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {draftInstallments
@@ -479,17 +479,17 @@ export default function ColumnManagePage() {
                         <div className="flex items-start justify-between">
                           <div>
                             <CardTitle className="text-lg">
-                              {language === "zh" ? "第" : "Issue "}
+                              {t("myColumns.issue")}
                               {installment.no}
-                              {language === "zh" ? "期" : ""}
+                              {t("myColumns.period")}
                             </CardTitle>
                             <CardDescription className="mt-1">
                               {installment.files.length}{" "}
-                              {language === "zh" ? "个文件" : "files"}
+                              {t("myColumns.files")}
                             </CardDescription>
                           </div>
                           <Badge variant="secondary">
-                            {language === "zh" ? "未发布" : "Draft"}
+                            {t("myColumns.draft")}
                           </Badge>
                         </div>
                       </CardHeader>
@@ -502,12 +502,12 @@ export default function ColumnManagePage() {
                           {isPublishing === installment.id ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              {language === "zh" ? "发布中..." : "Publishing..."}
+                              {t("myColumns.publishing")}
                             </>
                           ) : (
                             <>
                               <Eye className="mr-2 h-4 w-4" />
-                              {language === "zh" ? "发布期刊" : "Publish"}
+                              {t("myColumns.publish")}
                             </>
                           )}
                         </Button>
@@ -524,12 +524,10 @@ export default function ColumnManagePage() {
               <div className="space-y-4">
                 <FileText className="h-12 w-12 text-muted-foreground mx-auto" />
                 <h3 className="text-xl font-semibold">
-                  {language === "zh" ? "暂无期刊" : "No Installments"}
+                  {t("myColumns.noInstallments")}
                 </h3>
                 <p className="text-muted-foreground">
-                  {language === "zh"
-                    ? "点击上方按钮创建第一个期刊"
-                    : "Click the button above to create your first installment"}
+                  {t("myColumns.clickToCreateFirst")}
                 </p>
               </div>
             </Card>
@@ -544,12 +542,10 @@ export default function ColumnManagePage() {
             <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border">
               <div>
                 <CardTitle>
-                  {language === "zh" ? "新增期刊" : "Add Installment"}
+                  {t("myColumns.addInstallment")}
                 </CardTitle>
                 <CardDescription>
-                  {language === "zh"
-                    ? "从Vault中选择文件关联到此期刊（最多7个文件）"
-                    : "Select files from Vault to associate with this installment (max 7 files)"}
+                  {t("myColumns.selectFilesFromVault")}
                 </CardDescription>
               </div>
               <Button
@@ -568,7 +564,7 @@ export default function ColumnManagePage() {
                 <div className="flex flex-col items-center justify-center py-16">
                   <Loader2 className="h-12 w-12 text-primary mb-4 animate-spin" />
                   <p className="text-muted-foreground">
-                    {language === "zh" ? "加载中..." : "Loading..."}
+                    {t("common.loading")}
                   </p>
                 </div>
               ) : directories.length > 0 ? (
@@ -589,7 +585,7 @@ export default function ColumnManagePage() {
                 <div className="text-center py-16">
                   <Folder className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <p className="text-muted-foreground">
-                    {language === "zh" ? "暂无Vault文件" : "No Vault files"}
+                    {t("myColumns.noVaultFiles")}
                   </p>
                 </div>
               )}
@@ -597,14 +593,12 @@ export default function ColumnManagePage() {
               {selectedFiles.length > 0 && (
                 <div className="pt-4 border-t border-border">
                   <p className="text-sm font-medium mb-2">
-                    {language === "zh" ? "已选择" : "Selected"}: {selectedFiles.length}/7{" "}
-                    {language === "zh" ? "个文件" : "files"}
+                    {t("myColumns.selected")}: {selectedFiles.length}/7{" "}
+                    {t("myColumns.files")}
                   </p>
                   {selectedFiles.length >= 7 && (
                     <p className="text-xs text-muted-foreground">
-                      {language === "zh"
-                        ? "已达到最大文件数量限制（7个）"
-                        : "Maximum file limit reached (7 files)"}
+                      {t("myColumns.maxFileLimit")}
                     </p>
                   )}
                 </div>
@@ -620,7 +614,7 @@ export default function ColumnManagePage() {
                 }}
                 disabled={isAdding}
               >
-                {language === "zh" ? "取消" : "Cancel"}
+                {t("myColumns.cancel")}
               </Button>
               <Button
                 className="flex-1"
@@ -630,12 +624,12 @@ export default function ColumnManagePage() {
                 {isAdding ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {language === "zh" ? "创建中..." : "Creating..."}
+                    {t("myColumns.creating")}
                   </>
                 ) : (
                   <>
                     <Plus className="mr-2 h-4 w-4" />
-                    {language === "zh" ? "创建期刊" : "Create Installment"}
+                    {t("myColumns.createInstallment")}
                   </>
                 )}
               </Button>

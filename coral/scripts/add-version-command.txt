@@ -1,0 +1,47 @@
+# 调用 add_version 函数的 Sui CLI 命令
+
+# ========== 基本命令格式 ==========
+# sui client call \
+#   --package <PACKAGE_ID> \
+#   --module coral_version \
+#   --function add_version \
+#   --args <VERSION_ADMIN_CAP_ID> <GLOBAL_CONFIG_ID> <VERSION> \
+#   --gas-budget <GAS_BUDGET>
+
+# ========== 使用示例（请替换为实际的对象ID） ==========
+
+# 示例 1: 添加版本 1
+sui client call \
+  --package 0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76 \
+  --module coral_version \
+  --function add_version \
+  --args 0x905219c4f4ebfe1391e18ee88860e081d6b56667e33b8fb060c0e5247d91c8b0 0xe651015dd1c87f2e8bf170cc8ea260097914c54c89b11937d3e2a2f166af2e3c 1 \
+  --gas-budget 10000000
+
+# 示例 2: 添加版本 2（如果版本号不同）
+# sui client call \
+#   --package 0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76 \
+#   --module coral_version \
+#   --function add_version \
+#   --args <VERSION_ADMIN_CAP_ID> <GLOBAL_CONFIG_ID> 2 \
+#   --gas-budget 10000000
+
+# ========== 参数说明 ==========
+# --package: 合约包ID
+# --module: 模块名称 (coral_version)
+# --function: 函数名称 (add_version)
+# --args: 函数参数，按顺序：
+#   1. VERSION_ADMIN_CAP_ID: 版本管理员权限对象ID (&CoralVersionAdminCap)
+#   2. GLOBAL_CONFIG_ID: 全局配置对象ID (&mut GlobalConfig)
+#   3. VERSION: 版本号 (u16)，例如 1, 2, 3...
+# --gas-budget: Gas 预算（可选，默认会自动计算）
+
+# ========== 查看交易结果 ==========
+# 命令执行后会返回 JSON 格式的交易结果
+# 可以使用 jq 格式化输出：
+# sui client call ... | jq '.'
+
+# ========== 检查交易状态 ==========
+# 如果交易成功，会看到 "status": "success"
+# 如果失败，会看到错误信息
+

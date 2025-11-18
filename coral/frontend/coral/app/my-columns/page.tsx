@@ -227,11 +227,11 @@ export default function MyColumnsPage() {
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="columns" className="flex items-center gap-2">
                 <FileText className="h-4 w-4" />
-                {language === "zh" ? "我的专栏" : "My Columns"}
+                {t("myColumns.tabColumns")}
               </TabsTrigger>
               <TabsTrigger value="vaults" className="flex items-center gap-2">
                 <Folder className="h-4 w-4" />
-                {language === "zh" ? "Vault 管理" : "Vault Management"}
+                {t("myColumns.tabVaults")}
               </TabsTrigger>
             </TabsList>
 
@@ -262,7 +262,7 @@ export default function MyColumnsPage() {
               <CardContent>
                 <div className="text-2xl font-bold">{data.totalSubscribers.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  <span className="text-primary">+12.5%</span> {language === "zh" ? "较上月" : "from last month"}
+                  <span className="text-primary">+12.5%</span> {t("myColumns.fromLastMonth")}
                 </p>
               </CardContent>
             </Card>
@@ -628,14 +628,14 @@ export default function MyColumnsPage() {
             <CardContent className="flex-1 overflow-auto space-y-4">
               <div className="text-sm text-muted-foreground flex flex-wrap gap-x-6 gap-y-1">
                 <span>
-                  {language === "zh" ? "创建时间" : "Created"}: {selectedVault.created_at.toLocaleDateString(language === "zh" ? "zh-CN" : "en-US", {
+                  {t("myColumns.created")}: {selectedVault.created_at.toLocaleDateString(language === "zh" ? "zh-CN" : "en-US", {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
                   })}
                 </span>
                 <span>
-                  {language === "zh" ? "更新时间" : "Updated"}: {selectedVault.updated_at.toLocaleDateString(language === "zh" ? "zh-CN" : "en-US", {
+                  {t("myColumns.updated")}: {selectedVault.updated_at.toLocaleDateString(language === "zh" ? "zh-CN" : "en-US", {
                     year: "numeric",
                     month: "short",
                     day: "numeric",

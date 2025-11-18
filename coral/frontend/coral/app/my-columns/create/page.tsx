@@ -100,6 +100,7 @@ export default function CreateColumnPage() {
         description: "Invalid price",
         variant: "destructive",
       });
+      setIsCreating(false);
       return;
     }
       const tx = new Transaction();
@@ -127,6 +128,7 @@ export default function CreateColumnPage() {
         description: "Invalid start date",
         variant: "destructive",
       });
+      setIsCreating(false);
       return;
     }
         const updateMethod = tx.moveCall({
@@ -156,28 +158,31 @@ export default function CreateColumnPage() {
     });
 
         // ========= 4. 发送交易 =========
-    signAndExecuteTransaction(
-      { transaction: tx, chain },
-      {
-        onSuccess: (result) => {
-          alert("Create successful: " + result.digest);
-          setTimeout(() => {
-            window.location.reload();
-          }, 800);
-        },
-        onError: (error) => {
-          alert("Failed to create column. " + JSON.stringify(error));
-          console.error("Transaction failed:", error);
-        },
-      },
-    );
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      // 将 signAndExecuteTransaction 包装为 Promise，等待交易完成
+      await new Promise<void>((resolve, reject) => {
+        signAndExecuteTransaction(
+          { transaction: tx, chain },
+          {
+            onSuccess: (result) => {
+              console.log("Create successful:", result.digest);
+              resolve();
+            },
+            onError: (error) => {
+              console.error("Transaction failed:", error);
+              reject(error);
+            },
+          },
+        );
+      });
 
+      // 等待交易完成后再显示成功消息并导航
       toast({
         title: t("createColumn.toastSuccessTitle"),
         description: t("createColumn.toastSuccessDesc"),
       })
 
+      // 延迟一下再导航，让用户看到成功消息
+      await new Promise((resolve) => setTimeout(resolve, 1000))
       router.push("/my-columns")
     } catch (error) {
       console.error("创建专栏失败:", error)

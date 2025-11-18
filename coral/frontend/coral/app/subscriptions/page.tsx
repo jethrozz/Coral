@@ -40,8 +40,8 @@ export default function SubscriptionsPage() {
     } catch (error) {
       console.error("加载订阅失败:", error)
       toast({
-        title: language === "zh" ? "加载失败" : "Load Failed",
-        description: language === "zh" ? "无法加载订阅列表" : "Failed to load subscriptions",
+        title: t("subscriptions.loadFailed"),
+        description: t("subscriptions.loadFailedDesc"),
         variant: "destructive",
       })
     } finally {
@@ -56,8 +56,8 @@ export default function SubscriptionsPage() {
     setSubscriptions(subscriptions.filter((sub) => sub.id !== id))
 
     toast({
-      title: language === "zh" ? "已取消订阅" : "Subscription Cancelled",
-      description: language === "zh" ? `你已取消订阅 ${title}` : `You have cancelled subscription to ${title}`,
+      title: t("subscriptions.cancelled"),
+      description: t("subscriptions.cancelledDesc").replace("{title}", title),
     })
   }
 
@@ -89,11 +89,9 @@ export default function SubscriptionsPage() {
             {!loading && (
               <p className="text-muted-foreground">
                 {currentAccount?.address ? (
-                  language === "zh"
-                    ? `你正在订阅 ${subscriptions.length} 个专栏`
-                    : `You are subscribed to ${subscriptions.length} columns`
+                  t("subscriptions.subscribingCount").replace("{count}", subscriptions.length.toString())
                 ) : (
-                  language === "zh" ? "请先连接钱包" : "Please connect your wallet"
+                  t("subscriptions.connectWallet")
                 )}
               </p>
             )}
@@ -104,17 +102,17 @@ export default function SubscriptionsPage() {
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="h-12 w-12 text-primary mb-4 animate-spin" />
               <p className="text-muted-foreground">
-                {language === "zh" ? "加载中..." : "Loading..."}
+                {t("common.loading")}
               </p>
             </div>
           ) : !currentAccount?.address ? (
             <Card className="p-12 text-center">
               <div className="space-y-4">
                 <h3 className="text-xl font-semibold">
-                  {language === "zh" ? "未连接钱包" : "Wallet Not Connected"}
+                  {t("subscriptions.walletNotConnected")}
                 </h3>
                 <p className="text-muted-foreground">
-                  {language === "zh" ? "请连接钱包以查看你的订阅" : "Please connect your wallet to view your subscriptions"}
+                  {t("subscriptions.connectWalletToView")}
                 </p>
               </div>
             </Card>
@@ -130,7 +128,7 @@ export default function SubscriptionsPage() {
                     <CardHeader className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <Badge variant="secondary">
-                          {language === "zh" ? "专栏" : "Column"}
+                          {t("subscriptions.column")}
                         </Badge>
                         <div className="text-sm">
                           <span className="font-bold">{column.payment_method?.fee || 0} SUI</span>
@@ -165,11 +163,11 @@ export default function SubscriptionsPage() {
                       <div className="p-3 rounded-lg bg-muted/50">
                         <div className="grid grid-cols-2 gap-2 text-sm">
                           <div>
-                            <p className="text-muted-foreground">{language === "zh" ? "订阅者" : "Subscribers"}</p>
+                            <p className="text-muted-foreground">{t("subscriptions.subscribers")}</p>
                             <p className="font-medium">{column.subscriptions}</p>
                           </div>
                           <div>
-                            <p className="text-muted-foreground">{language === "zh" ? "期数" : "Issues"}</p>
+                            <p className="text-muted-foreground">{t("subscriptions.issues")}</p>
                             <p className="font-medium">{column.all_installment.length}/{column.plan_installment_number}</p>
                           </div>
                         </div>

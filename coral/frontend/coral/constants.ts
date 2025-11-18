@@ -1,5 +1,5 @@
 // Coral 合约配置常量
-export const PACKAGE_ID = "0x698582325c5afce2d982d146e574487be65f94b78931bd0ace099fb0816782d7";
+export const PACKAGE_ID = "0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76";
 
 // 合约对象类型
 export const DIR_TYPE = PACKAGE_ID + "::coral_sync::Directory";
@@ -12,13 +12,13 @@ export const PAYMENT_TYPE = PACKAGE_ID + "::coral_market::PaymentMethod";
 export const SUBSCRIPTION_TYPE = PACKAGE_ID + "::coral_market::SubscriptionCap";
 
 // 合约对象ID
-export const CORAL_ADMIN_CAP = "0xd29da0703ac36c94a626dafcdc50ae589f283ba440757a5f585c70b58ed46e49";
-export const VERSION_ADMIN_CAP = "0x2f15b3ff0a6dc69b23aa420991c61a04613d7f7d939bf7c8a8c35b038b77cbb6";
-export const GLOBAL_CONFIG_ID = "0xdae61cfdcd485f9be17ae12c4a0e319db4420d3cec37a783edbe14ab4ffaa91a";
-export const MARKET_ID = "0xc6f0004f12d49b73e68cf8af930dbdb2c0d1e25ec034ee4fed576f113041841e";
-export const MARKET_CONFIG_ID = "0x9fb7afcc0589b600f2ebe6e4aeb33ccdb52074268165e25e3f83660e0623e960";
-export const DISPLAY_ID = "0xbfcd36176bcf3cd515272bf4ed7d748865d2bf027f6d68145edf4bc6422e9b98";
-export const PUBLISHER_ID = "0xc41d8425745079ffe5562525cde578ed9d156d10d16d15c23394335eefe10729";
+export const CORAL_ADMIN_CAP = "0xff716b74e4cca5a74cbce527cb8b1010fd34e4a0d2ab443fa07b95dccdaecdfa";
+export const VERSION_ADMIN_CAP = "0x905219c4f4ebfe1391e18ee88860e081d6b56667e33b8fb060c0e5247d91c8b0";
+export const GLOBAL_CONFIG_ID = "0xe651015dd1c87f2e8bf170cc8ea260097914c54c89b11937d3e2a2f166af2e3c";
+export const MARKET_ID = "0x531504723648760f210d39ccc8dd7a2b9d5798a81f744663af76e77d84f5a917";
+export const MARKET_CONFIG_ID = "0xb30990c2aa2161186f92155bac101cd5e7519f81509d5e4cc2422b09611ee515";
+export const DISPLAY_ID = "0xe99ab7933130a4b59e09c908e1065b33132a117b41560e7f0e9e6e5d952d0069";
+export const PUBLISHER_ID = "0x90ffede2c84da33a21047c51b2ab1f5a7d408bc67c63a6dd10ce014658f75ca7";
 
 // 网络配置
 // Sui testnet GraphQL 端点

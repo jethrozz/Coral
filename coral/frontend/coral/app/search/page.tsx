@@ -46,7 +46,7 @@ export default function SearchPage() {
         name: column.creator,
         address: column.creator,
       },
-      category: language === "zh" ? "专栏" : "Column",
+      category: t("search.column"),
       subscribers: column.subscriptions,
       price: column.payment_method?.fee?.toString() || "0",
       coverImage: column.cover_img_url,
@@ -98,12 +98,12 @@ export default function SearchPage() {
   const getSearchTypePlaceholder = () => {
     switch (searchType) {
       case "title":
-        return language === "zh" ? "搜索专栏标题..." : "Search by title..."
+        return t("search.searchByTitle")
       case "creator":
-        return language === "zh" ? "搜索创作者地址..." : "Search by creator address..."
+        return t("search.searchByCreator")
       case "all":
       default:
-        return language === "zh" ? "搜索专栏标题、描述或创作者地址..." : "Search columns, description or creator..."
+        return t("search.searchAll")
     }
   }
 
@@ -126,13 +126,13 @@ export default function SearchPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">
-                      {language === "zh" ? "全部" : "All"}
+                      {t("search.all")}
                     </SelectItem>
                     <SelectItem value="title">
-                      {language === "zh" ? "标题" : "Title"}
+                      {t("search.searchTypeTitle")}
                     </SelectItem>
                     <SelectItem value="creator">
-                      {language === "zh" ? "创作者" : "Creator"}
+                      {t("search.searchTypeCreator")}
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -152,9 +152,9 @@ export default function SearchPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="subscribers">{t("search.sortBySubscribers")}</SelectItem>
-                  <SelectItem value="price-low">{language === "zh" ? "价格从低到高" : "Price: Low to High"}</SelectItem>
+                  <SelectItem value="price-low">{t("search.priceLowToHigh")}</SelectItem>
                   <SelectItem value="price-high">
-                    {language === "zh" ? "价格从高到低" : "Price: High to Low"}
+                    {t("search.priceHighToLow")}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -163,9 +163,7 @@ export default function SearchPage() {
             {/* Search Tips */}
             {searchType === "creator" && (
               <div className="text-sm text-muted-foreground">
-                💡 {language === "zh" 
-                  ? "提示：输入完整地址或部分地址进行搜索，例如：0x7d20..." 
-                  : "Tip: Enter full address or partial address, e.g., 0x7d20..."}
+                💡 {t("search.creatorTip")}
               </div>
             )}
           </div>
@@ -176,23 +174,23 @@ export default function SearchPage() {
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <Loader2 className="h-12 w-12 text-muted-foreground mb-4 animate-spin" />
                 <p className="text-muted-foreground">
-                  {language === "zh" ? "加载中..." : "Loading..."}
+                  {t("common.loading")}
                 </p>
               </div>
             ) : (
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-muted-foreground">
-                    {language === "zh" ? "找到" : "Found"}{" "}
+                    {t("search.found")}{" "}
                     <span className="font-semibold text-foreground">{filteredColumns.length}</span>{" "}
-                    {language === "zh" ? "个专栏" : "columns"}
+                    {t("search.columns")}
                   </p>
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery("")}
                       className="text-sm text-primary hover:text-accent transition-colors"
                     >
-                      {language === "zh" ? "清除搜索" : "Clear search"}
+                      {t("search.clearSearch")}
                     </button>
                   )}
                 </div>
@@ -208,13 +206,13 @@ export default function SearchPage() {
                     <Search className="h-12 w-12 text-muted-foreground mb-4" />
                     <h3 className="text-lg font-semibold mb-2">
                       {searchQuery 
-                        ? (language === "zh" ? "未找到匹配的专栏" : "No matching columns found")
-                        : (language === "zh" ? "暂无专栏" : "No columns available")}
+                        ? t("search.noMatchingColumns")
+                        : t("search.noColumnsAvailable")}
                     </h3>
                     <p className="text-muted-foreground">
                       {searchQuery
-                        ? (language === "zh" ? "尝试修改搜索条件或搜索类型" : "Try adjusting your search or filter")
-                        : (language === "zh" ? "目前还没有已发布的专栏" : "No columns published yet")}
+                        ? t("search.tryAdjustingSearch")
+                        : t("search.noColumnsPublished")}
                     </p>
                   </div>
                 )}

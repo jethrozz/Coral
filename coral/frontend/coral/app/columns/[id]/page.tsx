@@ -70,8 +70,8 @@ export default function ColumnDetailPage({ params }: { params: { id: string } })
     setIsSubscribing(false)
 
     toast({
-      title: language === "zh" ? "订阅成功！" : "Subscribed Successfully!",
-      description: language === "zh" ? `你已成功订阅 ${column.title}` : `You have subscribed to ${column.title}`,
+      title: t("column.subscribedSuccessfully"),
+      description: t("column.subscribedTo").replace("{title}", column.title),
     })
   }
 
@@ -136,12 +136,8 @@ export default function ColumnDetailPage({ params }: { params: { id: string } })
                   <CardTitle className="text-xl">{t("column.latestArticles")}</CardTitle>
                   <CardDescription>
                     {isSubscribed
-                      ? language === "zh"
-                        ? "你可以查看所有文章"
-                        : "You can view all articles"
-                      : language === "zh"
-                        ? "订阅后即可查看完整内容"
-                        : "Subscribe to view full content"}
+                      ? t("column.canViewAllArticles")
+                      : t("column.subscribeToViewContent")}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -180,8 +176,8 @@ export default function ColumnDetailPage({ params }: { params: { id: string } })
             <div className="lg:col-span-1">
               <Card className="sticky top-20">
                 <CardHeader>
-                  <CardTitle>{language === "zh" ? "订阅专栏" : "Subscribe"}</CardTitle>
-                  <CardDescription>{language === "zh" ? "解锁所有内容" : "Unlock all content"}</CardDescription>
+                  <CardTitle>{t("column.subscribeColumn")}</CardTitle>
+                  <CardDescription>{t("column.unlockAllContent")}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-2">
@@ -190,7 +186,7 @@ export default function ColumnDetailPage({ params }: { params: { id: string } })
                       <span className="text-muted-foreground">/{t("common.month")}</span>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      {language === "zh" ? "约" : "~"} ${(Number.parseFloat(column.price) * 2).toFixed(2)} USD
+                      {t("common.approx")} ${(Number.parseFloat(column.price) * 2).toFixed(2)} USD
                     </p>
                   </div>
 
@@ -201,30 +197,30 @@ export default function ColumnDetailPage({ params }: { params: { id: string } })
                     </Button>
                   ) : (
                     <Button className="w-full" onClick={handleSubscribe} disabled={isSubscribing}>
-                      {isSubscribing ? (language === "zh" ? "订阅中..." : "Subscribing...") : t("column.subscribe")}
+                      {isSubscribing ? t("column.subscribing") : t("column.subscribe")}
                     </Button>
                   )}
 
                   <div className="space-y-3 pt-4 border-t border-border">
                     <h4 className="font-semibold text-sm">
-                      {language === "zh" ? "订阅包含：" : "Subscription includes:"}
+                      {t("column.subscriptionIncludes")}
                     </h4>
                     <ul className="space-y-2 text-sm text-muted-foreground">
                       <li className="flex items-start gap-2">
                         <Check className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
-                        <span>{language === "zh" ? "访问所有历史文章" : "Access all past articles"}</span>
+                        <span>{t("column.accessAllPastArticles")}</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <Check className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
-                        <span>{language === "zh" ? "第一时间获取新文章" : "Get new articles first"}</span>
+                        <span>{t("column.getNewArticlesFirst")}</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <Check className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
-                        <span>{language === "zh" ? "支持创作者持续创作" : "Support creator"}</span>
+                        <span>{t("column.supportCreator")}</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <Check className="h-4 w-4 mt-0.5 text-primary flex-shrink-0" />
-                        <span>{language === "zh" ? "随时取消订阅" : "Cancel anytime"}</span>
+                        <span>{t("column.cancelAnytime")}</span>
                       </li>
                     </ul>
                   </div>
