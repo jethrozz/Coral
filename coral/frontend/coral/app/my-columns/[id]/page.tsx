@@ -15,10 +15,11 @@ import {
   getUserOwnedInstallments,
   addInstallment,
   addFileToInstallment,
-  publishInstallment 
+  publishInstallment,
+  getOneInstallment
 } from "@/contract/coral_column"
 import { getUserOwnDirectory, getUserOwnFile } from "@/contract/coral_server"
-import type { ColumnCap, Installment, Directory, File } from "@/shared/data"
+import type { ColumnCap, Installment, Directory, File, InstallmentWithFiles } from "@/shared/data"
 import { 
   Plus, 
   FileText, 
@@ -57,6 +58,9 @@ export default function ColumnManagePage() {
   const [isAddInstallmentOpen, setIsAddInstallmentOpen] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
   const [isPublishing, setIsPublishing] = useState<string | null>(null)
+  const [browsingInstallment, setBrowsingInstallment] = useState<InstallmentWithFiles | null>(null)
+  const [isBrowsingInstallment, setIsBrowsingInstallment] = useState(false)
+  const [isLoadingInstallment, setIsLoadingInstallment] = useState(false)
 
   // 加载专栏信息
   useEffect(() => {
@@ -102,13 +106,19 @@ export default function ColumnManagePage() {
   }
 
   const loadInstallments = async () => {
-    if (!column?.column_id) return
+    if (!column?.column_id || !currentAccount?.address) return
     
     try {
-      const installmentList = await getUserOwnedInstallments(column.column_id)
+      // 传入用户地址作为备用查询方案
+      const installmentList = await getUserOwnedInstallments(column.column_id, currentAccount.address)
       setInstallments(installmentList)
     } catch (error) {
       console.error("加载期刊失败:", error)
+      toast({
+        title: "错误",
+        description: "加载期刊失败",
+        variant: "destructive",
+      })
     }
   }
 
@@ -321,6 +331,34 @@ export default function ColumnManagePage() {
     loadVaultFiles()
   }
 
+  const handleBrowseInstallment = async (installmentId: string) => {
+    setIsLoadingInstallment(true)
+    setIsBrowsingInstallment(true)
+    try {
+      const installmentDetail = await getOneInstallment(installmentId)
+      if (installmentDetail) {
+        setBrowsingInstallment(installmentDetail)
+      } else {
+        toast({
+          title: "错误",
+          description: "无法加载期刊详情",
+          variant: "destructive",
+        })
+        setIsBrowsingInstallment(false)
+      }
+    } catch (error) {
+      console.error("加载期刊详情失败:", error)
+      toast({
+        title: "错误",
+        description: "加载期刊详情失败",
+        variant: "destructive",
+      })
+      setIsBrowsingInstallment(false)
+    } finally {
+      setIsLoadingInstallment(false)
+    }
+  }
+
   if (!currentAccount) {
     return (
       <div className="min-h-screen bg-background">
@@ -447,7 +485,7 @@ export default function ColumnManagePage() {
                           </Badge>
                         </div>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="space-y-3">
                         {installment.published_at && (
                           <p className="text-xs text-muted-foreground">
                             {t("myColumns.publishedAt")}:{" "}
@@ -456,6 +494,14 @@ export default function ColumnManagePage() {
                             )}
                           </p>
                         )}
+                        <Button
+                          className="w-full"
+                          variant="outline"
+                          onClick={() => handleBrowseInstallment(installment.id)}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          {t("myColumns.browse")}
+                        </Button>
                       </CardContent>
                     </Card>
                   ))}
@@ -496,6 +542,14 @@ export default function ColumnManagePage() {
                       <CardContent className="space-y-3">
                         <Button
                           className="w-full"
+                          variant="outline"
+                          onClick={() => handleBrowseInstallment(installment.id)}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          {t("myColumns.browse")}
+                        </Button>
+                        <Button
+                          className="w-full"
                           onClick={() => handlePublishInstallment(installment.id)}
                           disabled={isPublishing === installment.id}
                         >
@@ -534,6 +588,102 @@ export default function ColumnManagePage() {
           )}
         </div>
       </div>
+
+      {/* 浏览期刊抽屉 */}
+      {isBrowsingInstallment && (
+        <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-background/80 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => {
+            setIsBrowsingInstallment(false)
+            setBrowsingInstallment(null)
+          }} />
+          <Card className="relative z-10 h-full w-full max-w-md md:max-w-lg flex flex-col shadow-xl border-l border-border rounded-none">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  {browsingInstallment
+                    ? `${t("myColumns.issue")}${browsingInstallment.no}${t("myColumns.period")}`
+                    : t("myColumns.browseInstallment")}
+                </CardTitle>
+                <CardDescription className="mt-1">
+                  {browsingInstallment
+                    ? `${browsingInstallment.files.length} ${t("myColumns.files")}`
+                    : t("myColumns.installmentFiles")}
+                </CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-2"
+                onClick={() => {
+                  setIsBrowsingInstallment(false)
+                  setBrowsingInstallment(null)
+                }}
+              >
+                ✕
+              </Button>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-auto space-y-4">
+              {isLoadingInstallment ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : browsingInstallment && browsingInstallment.files.length > 0 ? (
+                <div className="border rounded-md p-4 bg-muted/40">
+                  <p className="text-sm font-medium mb-2">
+                    {t("myColumns.installmentFiles")}
+                  </p>
+                  <div className="space-y-2">
+                    {browsingInstallment.files.map((file, index) => {
+                      // 确保 key 是唯一的字符串
+                      const fileKey = typeof file.id === 'string' ? file.id : `file-${index}-${browsingInstallment.id}`;
+                      return (
+                        <div
+                          key={fileKey}
+                          className="flex items-start gap-2 text-sm text-muted-foreground p-2 rounded hover:bg-background/50 transition-colors"
+                        >
+                          <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                            <span className="text-xs font-medium text-primary">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                              <span className="font-medium text-foreground truncate">{file.title}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground pl-5">
+                              <span>
+                                {t("myColumns.createdAt")}:{" "}
+                                {file.created_at.toLocaleDateString(
+                                  language === "zh" ? "zh-CN" : "en-US"
+                                )}
+                              </span>
+                              <span>
+                                {t("myColumns.updatedAt")}:{" "}
+                                {file.updated_at.toLocaleDateString(
+                                  language === "zh" ? "zh-CN" : "en-US"
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">
+                    {t("myColumns.noFilesInInstallment")}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* 新增期刊弹窗 */}
       {isAddInstallmentOpen && (

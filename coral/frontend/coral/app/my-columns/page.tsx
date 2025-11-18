@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Users, TrendingUp, DollarSign, FileText, BarChart3, Folder, FolderOpen, Loader2, ChevronRight, ChevronDown } from "lucide-react"
+import { Plus, Users, TrendingUp, DollarSign, FileText, BarChart3, Folder, FolderOpen, Loader2, ChevronRight, ChevronDown, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { useI18n } from "@/lib/i18n/context"
-import { useCurrentAccount } from "@mysten/dapp-kit"
+import { useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit"
+import { useNetworkVariable } from "@/lib/networkConfig"
+import { useToast } from "@/hooks/use-toast"
 import { getUserOwnedColumns } from "@/contract/coral_column"
-import { getUserOwnDirectory, getUserOwnFile } from "@/contract/coral_server"
+import { getUserOwnDirectory, getUserOwnFile, deleteDirectory } from "@/contract/coral_server"
 import type { ColumnCap, Directory, File } from "@/shared/data"
 
 // Mock creator data
@@ -54,6 +56,10 @@ export default function MyColumnsPage() {
   const [data] = useState(mockCreatorData)
   const { t, language } = useI18n()
   const currentAccount = useCurrentAccount()
+  const { toast } = useToast()
+  const { mutate: signAndExecuteTransaction } = useSignAndExecuteTransaction()
+  const chain = useNetworkVariable("chain")
+  const packageId = useNetworkVariable("packageId")
   const [columns, setColumns] = useState<ColumnCap[]>([])
   const [directories, setDirectories] = useState<Directory[]>([])
   const [allDirectories, setAllDirectories] = useState<Directory[]>([])
@@ -64,6 +70,8 @@ export default function MyColumnsPage() {
   const [selectedVault, setSelectedVault] = useState<Directory | null>(null)
   const [isVaultBrowserOpen, setIsVaultBrowserOpen] = useState(false)
   const [expandedDirs, setExpandedDirs] = useState<string[]>([])
+  const [vaultToDelete, setVaultToDelete] = useState<Directory | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   
   // 加载用户的专栏
   useEffect(() => {
@@ -111,6 +119,38 @@ export default function MyColumnsPage() {
       console.error("加载Vault失败:", error)
     } finally {
       setVaultLoading(false)
+    }
+  }
+
+  const handleDeleteVault = async () => {
+    if (!vaultToDelete || !currentAccount?.address) return
+
+    setIsDeleting(true)
+    try {
+      await deleteDirectory({
+        directoryId: vaultToDelete.id,
+        packageId,
+        chain,
+        signAndExecuteTransaction,
+      })
+
+      toast({
+        title: t("myColumns.deleteVaultSuccess"),
+        description: t("myColumns.deleteVaultSuccessDesc"),
+      })
+
+      // 重新加载vault列表
+      await loadVaults()
+      setVaultToDelete(null)
+    } catch (error) {
+      console.error("删除Vault失败:", error)
+      toast({
+        title: t("myColumns.deleteVaultError"),
+        description: t("myColumns.deleteVaultErrorDesc"),
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -575,6 +615,13 @@ export default function MyColumnsPage() {
                             <FolderOpen className="mr-2 h-4 w-4" />
                             {t("myColumns.browse")}
                           </Button>
+                          <Button
+                            variant="outline"
+                            className="hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                            onClick={() => setVaultToDelete(dir)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -654,6 +701,54 @@ export default function MyColumnsPage() {
                 </p>
                 <div className="text-sm text-muted-foreground space-y-2">
                   {renderDirectoryTree(selectedVault)}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* 删除确认对话框 */}
+      {vaultToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <Card className="w-full max-w-md mx-4">
+            <CardHeader>
+              <CardTitle>{t("myColumns.deleteVaultConfirm")}</CardTitle>
+              <CardDescription>{t("myColumns.deleteVaultConfirmDesc")}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="p-3 bg-muted rounded-md">
+                  <p className="text-sm font-medium">{vaultToDelete.name}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Vault ID: {vaultToDelete.id.slice(0, 8)}...{vaultToDelete.id.slice(-6)}
+                  </p>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => setVaultToDelete(null)}
+                    disabled={isDeleting}
+                  >
+                    {t("myColumns.cancel")}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={handleDeleteVault}
+                    disabled={isDeleting}
+                  >
+                    {isDeleting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        {t("myColumns.deleting")}
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {t("myColumns.delete")}
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
             </CardContent>

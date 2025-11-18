@@ -11,9 +11,15 @@ importers:
       '@hookform/resolvers':
         specifier: ^3.10.0
         version: 3.10.0(react-hook-form@7.66.0(react@19.2.0))
+      '@mysten/bcs':
+        specifier: ^1.6.0
+        version: 1.9.2
       '@mysten/dapp-kit':
         specifier: ^0.16.5
         version: 0.16.16(@tanstack/react-query@5.90.7(react@19.2.0))(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
+      '@mysten/seal':
+        specifier: 0.9.3
+        version: 0.9.3(typescript@5.9.3)
       '@mysten/sui':
         specifier: ^1.30.1
         version: 1.44.0(typescript@5.9.3)
@@ -435,6 +441,9 @@ packages:
     peerDependencies:
       '@tanstack/react-query': ^5.0.0
       react: '*'
+
+  '@mysten/seal@0.9.3':
+    resolution: {integrity: sha512-wss0JHWxhWOjxfVSTz8PLFudz7dAAG2ve+S4luVeieaf2kDVaaGo0FrnnzkDGU42CYgZUGoz+0R36DTqISDz6w==}
 
   '@mysten/slush-wallet@0.1.16':
     resolution: {integrity: sha512-/g8vXNKI3TVKAhW3ss651hJVyB2R6X9I3OshH/NBLm0bD5kbnPmSKdP1rjr6xV4iMpArUkkZO9nIx7I8GjlwaQ==}
@@ -2428,6 +2437,17 @@ snapshots:
       - babel-plugin-macros
       - immer
       - react-dom
+      - typescript
+
+  '@mysten/seal@0.9.3(typescript@5.9.3)':
+    dependencies:
+      '@mysten/bcs': 1.9.2
+      '@mysten/sui': 1.44.0(typescript@5.9.3)
+      '@noble/curves': 1.9.4
+      '@noble/hashes': 1.8.0
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
       - typescript
 
   '@mysten/slush-wallet@0.1.16(typescript@5.9.3)':

@@ -2,12 +2,17 @@ import { SuiGraphQLClient } from "@mysten/sui/graphql";
 import { graphql } from "@mysten/sui/graphql/schemas/latest";
 import {
   COLUMN_CAP_TYPE,
+  COLUMN_CAP_TYPE_OLD,
   INSTALLMENT_TYPE,
+  INSTALLMENT_TYPE_OLD,
   UPDATE_TYPE,
+  UPDATE_TYPE_OLD,
   PAYMENT_TYPE,
+  PAYMENT_TYPE_OLD,
   SUBSCRIPTION_TYPE,
   GRAPHQL_URL,
   COLUMN_TYPE,
+  COLUMN_TYPE_OLD,
 } from "@/constants";
 import {
   ColumnCap,
@@ -23,6 +28,7 @@ import {
   queryByAddressAndType,
   queryByAddress,
   getObjectsByType,
+  queryObjectsByIds,
 } from "@/contract/coral_server";
 import { Transaction } from '@mysten/sui/transactions';
 
@@ -131,34 +137,26 @@ export async function getAllColumns(): Promise<Array<ColumnOtherInfo>> {
 export async function getOneInstallment(
   id: string
 ): Promise<InstallmentWithFiles | null> {
-  const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
-  const { data } = await suiGraphQLClient.query({
-    query: queryByAddress,
-    variables: { ids: [id] },
-  });
+  const objects = await queryObjectsByIds([id]);
+  
+  if (objects.length === 0) {
+    return null;
+  }
 
-  let edges = data?.objects?.edges as any[];
-  let fileIds = [];
+  const json = objects[0].json;
+  const fileIds = json.files || [];
 
-  if (edges && edges.length > 0) {
-    const json = edges[0].node.asMoveObject?.contents?.json;
-    fileIds.push(...json.files);
+  let installment: InstallmentWithFiles = {
+    id: json.id,
+    belong_column: json.belong_column,
+    no: json.no,
+    files: [],
+  };
 
-    let installment: InstallmentWithFiles = {
-      id: json.id,
-      belong_column: json.belong_column,
-      no: json.no,
-      files: [],
-    };
-
-    const { data: fileData } = await suiGraphQLClient.query({
-      query: queryByAddress,
-      variables: { ids: fileIds },
-    });
-
-    let fileEdges = fileData?.objects?.edges as any[];
-    for (const edge of fileEdges) {
-      const fileJson = edge.node.asMoveObject?.contents?.json;
+  if (fileIds.length > 0) {
+    const fileObjects = await queryObjectsByIds(fileIds);
+    for (const fileObj of fileObjects) {
+      const fileJson = fileObj.json;
       installment.files.push({
         id: fileJson.id,
         title: fileJson.title,
@@ -170,62 +168,163 @@ export async function getOneInstallment(
         content: "",
       });
     }
-
-    return installment;
   }
 
-  return null;
+  return installment;
 }
 
-// 获取用户拥有的期刊
+// 获取用户拥有的期刊（通过 Column ID，兼容新旧版本）
 export async function getUserOwnedInstallments(
-  columnId: string
+  columnId: string,
+  userAddress?: string
 ): Promise<Array<Installment>> {
   let result: Installment[] = [];
-  const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
 
-  const { data } = await suiGraphQLClient.query({
-    query: queryByAddress,
-    variables: { ids: [columnId] },
-  });
+  // 通过对象 ID 查询 Column（不依赖类型，兼容新旧版本）
+  const objects = await queryObjectsByIds([columnId]);
+  console.log("getUserOwnedInstallments objects", objects);
 
-  let edges = data?.objects?.edges as any[];
-  let installmentIds = [];
+  let installmentIds: string[] = [];
+  if (objects.length > 0) {
+    const json = objects[0].json;
+    console.log("getUserOwnedInstallments json", json);
+    if (json && json.all_installment && Array.isArray(json.all_installment)) {
+      // 确保所有 ID 都是字符串类型
+      installmentIds = json.all_installment
+        .map((id: any) => String(id).trim())
+        .filter((id: string) => id.length > 0);
+    }
+  }
 
-  if (edges && edges.length > 0) {
-    const json = edges[0].node.asMoveObject?.contents?.json;
-    installmentIds.push(...json.all_installment);
-
-    const { data: installmentData } = await suiGraphQLClient.query({
-      query: queryByAddress,
-      variables: { ids: installmentIds },
-    });
-
-    let installmentEdges = installmentData?.objects?.edges as any[];
-    for (const edge of installmentEdges) {
-      const installmentJson = edge.node.asMoveObject?.contents?.json;
-      result.push({
-        id: installmentJson.id,
-        belong_column: installmentJson.belong_column,
-        no: installmentJson.no,
-        files: installmentJson.files,
-        is_published: installmentJson.is_published,
-        published_at: installmentJson.published_at,
+  // 如果从 Column 获取到了期刊 ID，直接通过对象 ID 查询
+  if (installmentIds.length > 0) {
+    console.log("getUserOwnedInstallments - 准备查询期刊 IDs:", installmentIds);
+    const installmentObjects = await queryObjectsByIds(installmentIds);
+    console.log("getUserOwnedInstallments - 查询到的期刊对象:", installmentObjects);
+    console.log("getUserOwnedInstallments - 查询到的期刊对象数量:", installmentObjects.length);
+    
+    for (const obj of installmentObjects) {
+      const installmentJson = obj.json;
+      console.log("getUserOwnedInstallments - 检查期刊:", {
+        id: installmentJson?.id,
+        belong_column: installmentJson?.belong_column,
+        columnId: columnId,
+        match: installmentJson?.belong_column === columnId,
+        no: installmentJson?.no,
+        is_published: installmentJson?.is_published
       });
+      
+      if (installmentJson) {
+        // 不检查 belong_column，因为我们已经通过 Column 的 all_installment 获取了这些 ID
+        result.push({
+          id: installmentJson.id,
+          belong_column: installmentJson.belong_column,
+          no: installmentJson.no,
+          files: installmentJson.files || [],
+          is_published: installmentJson.is_published || false,
+          published_at: installmentJson.published_at,
+        });
+      }
+    }
+    console.log("getUserOwnedInstallments - 最终结果:", result);
+  } else {
+    // 如果没有从 Column 获取到期刊 ID，尝试通过类型查询（需要用户地址）
+    if (userAddress) {
+      console.log(`Column ${columnId} 中未找到期刊 ID，尝试通过类型查询用户 ${userAddress} 的所有期刊`);
+      result = await getAllInstallmentsByColumnId(columnId, userAddress);
+    } else {
+      console.warn(`无法从 Column ${columnId} 获取期刊列表，且未提供用户地址，无法通过类型查询`);
     }
   }
 
   return result;
 }
 
-// 获取用户拥有的专栏
+// 通过类型查询所有期刊，然后过滤出属于指定 Column 的（兼容新旧版本）
+// 注意：这个函数需要用户地址来查询，如果 Column 查询失败时使用
+async function getAllInstallmentsByColumnId(
+  columnId: string,
+  userAddress?: string
+): Promise<Array<Installment>> {
+  const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
+  const result: Installment[] = [];
+
+  // 如果没有用户地址，无法通过类型查询，返回空数组
+  if (!userAddress) {
+    return result;
+  }
+
+  const parseInstallmentData = (data: any, columnId: string) => {
+    return (
+      data?.address?.objects?.edges
+        ?.map((edge: any) => {
+          const json = edge.node.contents?.json;
+          // 只返回属于指定 Column 的期刊
+          if (json && json.belong_column === columnId) {
+            return {
+              id: json.id,
+              belong_column: json.belong_column,
+              no: json.no,
+              files: json.files || [],
+              is_published: json.is_published || false,
+              published_at: json.published_at,
+            } as Installment;
+          }
+          return null;
+        })
+        .filter((item: Installment | null) => item !== null) || []
+    );
+  };
+
+  // 查询新版本的期刊
+  let endCursor: string | null | undefined = null;
+  let hasNextPage = false;
+  do {
+    const currentPage: any = await suiGraphQLClient.query({
+      query: queryByAddressAndType,
+      variables: { 
+        address: userAddress,
+        type: INSTALLMENT_TYPE, 
+        cursor: endCursor 
+      },
+    });
+    result.push(...parseInstallmentData(currentPage.data, columnId));
+    
+    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
+    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
+  } while (hasNextPage);
+
+  // 查询旧版本的期刊
+  endCursor = null;
+  hasNextPage = false;
+  do {
+    const currentPage: any = await suiGraphQLClient.query({
+      query: queryByAddressAndType,
+      variables: { 
+        address: userAddress,
+        type: INSTALLMENT_TYPE_OLD, 
+        cursor: endCursor 
+      },
+    });
+    result.push(...parseInstallmentData(currentPage.data, columnId));
+    
+    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
+    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
+  } while (hasNextPage);
+
+  // 去重（基于对象 ID）
+  const uniqueResult = Array.from(
+    new Map(result.map((inst) => [inst.id, inst])).values()
+  );
+
+  return uniqueResult;
+}
+
+// 获取用户拥有的专栏（同时查询新旧版本）
 export async function getUserOwnedColumns(
   address: string
 ): Promise<Array<ColumnCap>> {
   const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
-  const type = COLUMN_CAP_TYPE;
-
-  let endCursor: string | null | undefined = null;
   const result: ColumnCap[] = [];
 
   const parseColumnData = (data: any) => {
@@ -251,12 +350,14 @@ export async function getUserOwnedColumns(
     );
   };
 
+  // 查询新版本的专栏
+  let endCursor: string | null | undefined = null;
   let hasNextPage = false;
 
   do {
     const currentPage: any = await suiGraphQLClient.query({
       query: queryByAddressAndType,
-      variables: { address, type, cursor: endCursor },
+      variables: { address, type: COLUMN_CAP_TYPE, cursor: endCursor },
     });
     let columnCap = parseColumnData(currentPage.data);
     result.push(...columnCap);
@@ -274,7 +375,37 @@ export async function getUserOwnedColumns(
     hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
 
-  return result;
+  // 查询旧版本的专栏
+  endCursor = null;
+  hasNextPage = false;
+
+  do {
+    const currentPage: any = await suiGraphQLClient.query({
+      query: queryByAddressAndType,
+      variables: { address, type: COLUMN_CAP_TYPE_OLD, cursor: endCursor },
+    });
+    let columnCap = parseColumnData(currentPage.data);
+    result.push(...columnCap);
+
+    const columnIds = columnCap.map((c: ColumnCap) => c.column_id);
+    const otherInfos = await getColumnsByIds(columnIds);
+    for (const otherInfo of otherInfos) {
+      const columnCapItem = result.find((c) => c.column_id === otherInfo.id);
+      if (columnCapItem) {
+        columnCapItem.other = otherInfo;
+      }
+    }
+
+    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
+    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
+  } while (hasNextPage);
+
+  // 去重（基于对象 ID）
+  const uniqueResult = Array.from(
+    new Map(result.map((col) => [col.id, col])).values()
+  );
+
+  return uniqueResult;
 }
 
 export async function createColumn({
@@ -396,9 +527,14 @@ export async function createColumn({
   }
 }
 
+// 根据ID获取单个专栏详细信息
+export async function getColumnById(id: string): Promise<ColumnOtherInfo | null> {
+  const columns = await getColumnsByIds([id]);
+  return columns.length > 0 ? columns[0] : null;
+}
+
 // 根据ID数组获取专栏详细信息
 async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
-  const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
   let result: ColumnOtherInfo[] = [];
 
   if (!ids || ids.length === 0) {
@@ -406,17 +542,14 @@ async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
   }
 
   try {
-    const { data } = await suiGraphQLClient.query({
-      query: queryByAddress,
-      variables: { ids },
-    });
+    const objects = await queryObjectsByIds(ids);
 
     let waitQueryIds: string[] = [];
     let colOtherInfoMap = new Map<string, ColumnOtherInfo>();
 
     // 第一次封装，拿到基本信息
-    for (const edge of (data?.objects?.edges as any[]) || []) {
-      const json = edge.node.asMoveObject?.contents?.json;
+    for (const obj of objects) {
+      const json = obj.json;
       if (!json) continue;
 
       let colOtherInfo = {
@@ -441,36 +574,42 @@ async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
 
       result.push(colOtherInfo);
 
-      // 收集需要查询的ID
+      // 收集需要查询的ID，确保都是字符串类型
       if (json.update_method) {
-        colOtherInfoMap.set(json.update_method, colOtherInfo);
-        waitQueryIds.push(json.update_method);
+        const updateMethodId = String(json.update_method).trim();
+        if (updateMethodId) {
+          colOtherInfoMap.set(updateMethodId, colOtherInfo);
+          waitQueryIds.push(updateMethodId);
+        }
       }
       if (json.payment_method) {
-        colOtherInfoMap.set(json.payment_method, colOtherInfo);
-        waitQueryIds.push(json.payment_method);
+        const paymentMethodId = String(json.payment_method).trim();
+        if (paymentMethodId) {
+          colOtherInfoMap.set(paymentMethodId, colOtherInfo);
+          waitQueryIds.push(paymentMethodId);
+        }
       }
-      if (json.all_installment) {
-        json.all_installment?.forEach((i: string) => {
-          colOtherInfoMap.set(i, colOtherInfo);
-          waitQueryIds.push(i);
+      if (json.all_installment && Array.isArray(json.all_installment)) {
+        json.all_installment.forEach((i: any) => {
+          const installmentId = String(i).trim();
+          if (installmentId) {
+            colOtherInfoMap.set(installmentId, colOtherInfo);
+            waitQueryIds.push(installmentId);
+          }
         });
       }
     }
 
     // 第二次封装，拿到update_method和payment_method
     if (waitQueryIds.length > 0) {
-      const { data: otherDatas } = await suiGraphQLClient.query({
-        query: queryByAddress,
-        variables: { ids: waitQueryIds },
-      });
+      const otherObjects = await queryObjectsByIds(waitQueryIds);
 
-      for (const edge of (otherDatas?.objects?.edges as any[]) || []) {
-        const type = edge.node.asMoveObject?.contents?.type.repr;
-        const json = edge.node.asMoveObject?.contents?.json;
+      for (const obj of otherObjects) {
+        const type = obj.type;
+        const json = obj.json;
         if (!json) continue;
 
-        if (type === UPDATE_TYPE) {
+        if (type === UPDATE_TYPE || type === UPDATE_TYPE_OLD) {
           let otherInfo = colOtherInfoMap.get(json.id);
           if (otherInfo) {
             otherInfo.update_method = {
@@ -480,7 +619,7 @@ async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
               installment_number: json.installment_number,
             };
           }
-        } else if (type === PAYMENT_TYPE) {
+        } else if (type === PAYMENT_TYPE || type === PAYMENT_TYPE_OLD) {
           let otherInfo = colOtherInfoMap.get(json.id);
           if (otherInfo) {
             otherInfo.payment_method = {
@@ -492,15 +631,16 @@ async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
               subscription_time: json.subscription_time,
             };
           }
-        } else if (type === INSTALLMENT_TYPE) {
+        } else if (type === INSTALLMENT_TYPE || type === INSTALLMENT_TYPE_OLD) {
+          // 兼容新旧版本的 Installment 类型
           let otherInfo = colOtherInfoMap.get(json.id);
           if (otherInfo) {
             otherInfo.all_installment.push({
               id: json.id,
               belong_column: json.belong_column,
               no: json.no,
-              files: json.files,
-              is_published: json.is_published,
+              files: json.files || [],
+              is_published: json.is_published || false,
               published_at: json.published_at,
             });
           }

@@ -103,6 +103,10 @@ export default function CreateColumnPage() {
       setIsCreating(false);
       return;
     }
+      // 调试：打印实际使用的 Package ID
+      console.log("创建专栏使用的 Package ID:", packageId);
+      console.log("期望的新 Package ID: 0x08e83229240788711c736a691f7a3d45d8d3c4a22ce6dc32943b9217ade263fe");
+      
       const tx = new Transaction();
       tx.setSender(currentAccount.address);
       const price = BigInt(Math.round(priceNumber * 1e9));

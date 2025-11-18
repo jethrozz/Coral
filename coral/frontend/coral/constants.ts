@@ -1,15 +1,28 @@
 // Coral 合约配置常量
-export const PACKAGE_ID = "0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76";
+export const PACKAGE_ID = "0x08e83229240788711c736a691f7a3d45d8d3c4a22ce6dc32943b9217ade263fe";
+export const PREVIOUS_PACKAGE_ID = "0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76";
 
-// 合约对象类型
+// 合约对象类型（新版本）
 export const DIR_TYPE = PACKAGE_ID + "::coral_sync::Directory";
 export const FILE_TYPE = PACKAGE_ID + "::coral_sync::File";
+
+// 合约对象类型（旧版本，用于查询历史数据）
+export const DIR_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_sync::Directory";
+export const FILE_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_sync::File";
 export const COLUMN_CAP_TYPE = PACKAGE_ID + "::coral_market::ColumnCap";
 export const COLUMN_TYPE = PACKAGE_ID + "::coral_market::Column";
 export const INSTALLMENT_TYPE = PACKAGE_ID + "::coral_market::Installment";
 export const UPDATE_TYPE = PACKAGE_ID + "::coral_market::UpdateMethod";
 export const PAYMENT_TYPE = PACKAGE_ID + "::coral_market::PaymentMethod";
 export const SUBSCRIPTION_TYPE = PACKAGE_ID + "::coral_market::SubscriptionCap";
+
+// 旧版本类型（用于查询历史数据）
+export const COLUMN_CAP_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::ColumnCap";
+export const COLUMN_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::Column";
+export const INSTALLMENT_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::Installment";
+export const UPDATE_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::UpdateMethod";
+export const PAYMENT_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::PaymentMethod";
+export const SUBSCRIPTION_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::SubscriptionCap";
 
 // 合约对象ID
 export const CORAL_ADMIN_CAP = "0xff716b74e4cca5a74cbce527cb8b1010fd34e4a0d2ab443fa07b95dccdaecdfa";
@@ -24,6 +37,8 @@ export const PUBLISHER_ID = "0x90ffede2c84da33a21047c51b2ab1f5a7d408bc67c63a6dd1
 // Sui testnet GraphQL 端点
 // 注意：如果 Mysten Labs 的端点不可用，可能需要使用自己的 RPC 节点
 export const GRAPHQL_URL = "https://graphql.testnet.sui.io/graphql";
+// RPC 端点 - 使用官方格式: https://fullnode.NETWORK.sui.io:443
+export const RPC_URL = "https://fullnode.testnet.sui.io:443";
 // 备用端点 - 可以尝试使用其他 RPC 提供商
 export const NET_WORK = "testnet";
 

@@ -85,7 +85,7 @@ module coral::coral_sync {
         file.title = title;
         file.blob_id = blob_id;
     }
-    public fun delete_file(file: File, _ctx: &mut sui::tx_context::TxContext) {
+    public entry fun delete_file(file: File, _ctx: &mut sui::tx_context::TxContext) {
         let File{
             id,
             blob_id: _,
@@ -99,7 +99,7 @@ module coral::coral_sync {
         object::delete(id);
     }
 
-    public fun delete_directory(dir: Directory, _ctx: &mut sui::tx_context::TxContext) {
+    public entry fun delete_directory(dir: Directory, _ctx: &mut sui::tx_context::TxContext) {
          let Directory {
             id,
             name: _,

@@ -42,7 +42,7 @@ print_info "升级网络: $NETWORK"
 print_info "UpgradeCap ID: $UPGRADE_CAP_ID"
 
 # 检查配置文件
-CONFIG_FILE="deployed_addresses_${NETWORK}.json"
+CONFIG_FILE="../deployed_addresses_${NETWORK}.json"
 if [ ! -f "$CONFIG_FILE" ]; then
     print_error "找不到配置文件: $CONFIG_FILE"
     print_info "请先运行部署脚本: ./scripts/deploy.sh $NETWORK"

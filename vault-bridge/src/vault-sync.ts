@@ -5,13 +5,14 @@ import { Transaction } from '@mysten/sui/transactions';
 import { PACKAGE_ID, NET_WORK } from './constant';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 import { SealUtil } from './utils/sealUtil';
-import { VaultSyncModal } from './components/modal';
+import { VaultSyncModal, DiffModal } from './components/modal';
 
-export async function initVault(vaultName: string, wallet: MnemonicWallet): Promise<Vault | undefined> {
+export async function initVault(vaultName: string, wallet: MnemonicWallet, packageId: string = PACKAGE_ID): Promise<Vault | undefined> {
     // 初始化，先获取到vault的名称，去链上找到该钱包是否有该vault
     // 有就提示同步，否则提示链上无对应对象，需要先上传
     const address = wallet.getAddress();
-    let vault: Vault | undefined = await getVaultByAddress(address, vaultName);
+    console.log("initVault 使用 packageId:", packageId);
+    let vault: Vault | undefined = await getVaultByAddress(address, vaultName, packageId);
     console.log("初始化vault:", vault);
     
     if (!vault) {
@@ -21,17 +22,17 @@ export async function initVault(vaultName: string, wallet: MnemonicWallet): Prom
         tx.setGasBudget(10000000);
         
         const rootDir = tx.moveCall({
-            package: PACKAGE_ID,
-            module: 'perlite_sync',
+            package: packageId,
+            module: 'coral_sync',
             function: 'new_root_directory',
             arguments: [tx.pure.string(vaultName), tx.object("0x6")],
         });
         
         tx.moveCall({
-            package: PACKAGE_ID,
-            module: 'perlite_sync',
+            package: packageId,
+            module: 'coral_sync',
             function: 'transfer_dir',
-            arguments: [tx.object(rootDir), tx.pure.address(address)],
+            arguments: [rootDir, tx.pure.address(address)],
         });
         
         const suiClient = new SuiClient({ url: getFullnodeUrl(NET_WORK) });
@@ -47,10 +48,10 @@ export async function initVault(vaultName: string, wallet: MnemonicWallet): Prom
         } catch (e) {
             console.log("交易构建错误:", e);
         }
-        
-        vault = await getVaultByAddress(address, vaultName);
+        sleep(1000);
+        vault = await getVaultByAddress(address, vaultName, packageId);
         if (!vault) {
-            return await getVaultByAddress(address, vaultName);
+            return await getVaultByAddress(address, vaultName, packageId);
         }
     }
     
@@ -63,8 +64,9 @@ export async function pushToChain(
     allMarkdownFiles: TFile[], 
     wallet: MnemonicWallet, 
     epoch: number, 
-    notifyProgress: (message: string) => void, 
-    app: App
+    notifyProgress: (message: string, progress?: number) => void, 
+    app: App,
+    packageId: string = PACKAGE_ID
 ) {
     console.log("推送vault", vault.name, vaultLocalPath);
     let address = wallet.getAddress();
@@ -80,15 +82,22 @@ export async function pushToChain(
         let waitTransferFiles = [];
         let tx = new Transaction();
         tx.setSender(address);
-        
+        console.log("packageId:", packageId);
         // 上传文件
         let props = {
             vaultId: vaultId,
-            moduleName: 'perlite_sync',
+            moduleName: 'coral_sync',
             wallet: wallet,
-            packageId: PACKAGE_ID,
+            packageId: packageId,
         };
         const { handleSubmit } = SealUtil(props);
+        
+        // 计算需要上传的文件数量
+        const filesToUpload = allMarkdownFiles.filter(file => !map.has(file.path));
+        const totalFiles = filesToUpload.length;
+        let processedFiles = 0;
+
+        notifyProgress(`准备上传 ${totalFiles} 个文件...`, 0);
 
         for (let j = 0; j < allMarkdownFiles.length; j++) {
             let file = allMarkdownFiles[j];
@@ -115,12 +124,15 @@ export async function pushToChain(
                         continue;
                     }
                     let parent = parentObjMap.get(tempPath);
-                    notifyProgress(`处理目录: ${tempPath}`);
+                    notifyProgress(`处理目录: ${tempPath}`, Math.floor((processedFiles / totalFiles) * 80));
+                    // 判断 parent 是字符串ID还是交易中的对象引用
+                    let parentArg = typeof parent === 'string' ? tx.object(parent) : parent;
+                    console.log(`创建目录 ${currDir}, parent 类型: ${typeof parent}, 是否为字符串: ${typeof parent === 'string'}`);
                     let par = tx.moveCall({
-                        package: PACKAGE_ID,
-                        module: 'perlite_sync',
+                        package: packageId,
+                        module: 'coral_sync',
                         function: 'new_directory',
-                        arguments: [tx.pure.string(currDir), tx.object(parent), tx.object("0x6")],
+                        arguments: [tx.pure.string(currDir), parentArg, tx.object("0x6")],
                     });
                     newDirMap.set(tempPath, par);
                     parentObjMap.set(tempPath + "/" + currFilePathSplit[i + 1], par);
@@ -135,7 +147,9 @@ export async function pushToChain(
                 const data = fs.readFileSync(sourcePath);
                 const fileName = path.basename(sourcePath);
                 console.log("文件名:", fileName);
-                notifyProgress(`处理文件: ${fileName}`);
+                
+                const currentProgress = Math.floor((processedFiles / totalFiles) * 80);
+                notifyProgress(`正在上传: ${fileName} (${processedFiles + 1}/${totalFiles})`, currentProgress);
                 
                 const result = await handleSubmit(new File([data], fileName, {
                     type: 'text/plain',
@@ -143,46 +157,61 @@ export async function pushToChain(
                 }), epoch);
                 
                 if (result) {
-                    notifyProgress(`文件: ${fileName} 已保存至Walrus`);
+                    console.log("result", result);
+                    processedFiles++;
+                    const newProgress = Math.floor((processedFiles / totalFiles) * 80);
+                    notifyProgress(`文件 ${fileName} 已保存至Walrus (${processedFiles}/${totalFiles})`, newProgress);
+                    // 判断 parent_dir 是字符串ID还是交易中的对象引用
+                    console.log("parent_dir", parent_dir);
+                    let parentDirArg = typeof parent_dir === 'string' ? tx.object(parent_dir) : parent_dir;
+                    console.log("parent_dir", parentDirArg);
+                    console.log(`创建文件 ${fileName}, parent_dir 类型: ${typeof parent_dir}, 是否为字符串: ${typeof parent_dir === 'string'}`);
                     let fileResult = tx.moveCall({
-                        target: PACKAGE_ID + '::perlite_sync::new_file',
-                        arguments: [tx.pure.string(fileName), tx.pure.string(result.blobId), tx.pure.u64(result.endEpoch), tx.object(parent_dir), tx.object("0x6")],
+                        target: packageId + '::coral_sync::new_file',
+                        arguments: [tx.pure.string(fileName), tx.pure.string(result.blobId), tx.pure.u64(result.endEpoch), parentDirArg, tx.object("0x6")],
                     });
+                    console.log("fileResult", fileResult);
                     waitTransferFiles.push(fileResult);
                 }
             }
         }
         
-        // 处理目录
+        // 处理目录 - dir 是 moveCall 返回的 TransactionArgument，直接使用，不要包装
         waitTransferDirs.forEach(dir => {
+            console.log("transfer_dir (TransactionArgument):", dir);
             tx.moveCall({
-                package: PACKAGE_ID,
-                module: 'perlite_sync',
+                package: packageId,
+                module: 'coral_sync',
                 function: 'transfer_dir',
-                arguments: [tx.object(dir), tx.pure.address(address)],
+                arguments: [dir, tx.pure.address(address)],
             });
         });
         
-        // 处理文件
+        // 处理文件 - file 是 moveCall 返回的 TransactionArgument，直接使用，不要包装
         waitTransferFiles.forEach(file => {
+            console.log("transfer_file (TransactionArgument):", file);
             tx.moveCall({
-                package: PACKAGE_ID,
-                module: 'perlite_sync',
+                package: packageId,
+                module: 'coral_sync',
                 function: 'transfer_file',
-                arguments: [tx.object(file), tx.pure.address(address)],
+                arguments: [file, tx.pure.address(address)],
             });
         });
         
-        notifyProgress("正在同步数据至链上，请稍后...");
+        notifyProgress("正在同步数据至链上，请稍后...", 85);
         const suiClient = new SuiClient({ url: getFullnodeUrl(NET_WORK) });
         
         try {
             let txBytes = await tx.build({ client: suiClient });
+            notifyProgress("正在签名交易...", 90);
             let signature = await wallet.signTransaction(txBytes);
+            notifyProgress("正在提交交易到区块链...", 95);
             let txResult = await suiClient.executeTransactionBlock({
                 transactionBlock: txBytes,
                 signature: signature,
             });
+            
+            notifyProgress("上传完成!", 100);
             
             const confirmModal = new VaultSyncModal(
                 app, 
@@ -191,7 +220,7 @@ export async function pushToChain(
             );
             confirmModal.open();
         } catch (e) {
-            notifyProgress("发布数据上链异常，请查看控制台获取详情");
+            notifyProgress("发布数据上链异常，请查看控制台获取详情", 0);
             console.log("交易构建错误:", e);
             throw e;
         }
@@ -205,23 +234,42 @@ export async function pullFromChain(
     vaultLocalPath: string, 
     allMarkdownFiles: TFile[], 
     wallet: MnemonicWallet, 
-    adapter: DataAdapter
+    adapter: DataAdapter,
+    notifyProgress?: (message: string, progress?: number) => void,
+    app?: App,
+    packageId: string = PACKAGE_ID
 ) {
     // 下载，先获取到vault的名称，去链上找该钱包是否有该vault
     // 有，判断是否有更新
     const vaultId = vault.id;
     const props = {
         vaultId: vaultId,
-        moduleName: 'perlite_sync',
+        moduleName: 'coral_sync',
         wallet: wallet,
-        packageId: PACKAGE_ID,
+        packageId: packageId,
     };
 
-    const { downloadFile } = SealUtil(props);
+    const { downloadFile, downloadFileContent } = SealUtil(props);
 
     const stack: Array<{ dir: VaultDir, visited: boolean }> = [];
     stack.push({ dir: vault, visited: false });
     const path_join: string[] = [];
+    
+    // 计算总文件数
+    const countFiles = (dir: VaultDir): number => {
+        let count = dir.files.length;
+        dir.directories.forEach(subDir => {
+            count += countFiles(subDir);
+        });
+        return count;
+    };
+    
+    const totalFiles = countFiles(vault);
+    let processedFiles = 0;
+    
+    if (notifyProgress) {
+        notifyProgress(`准备下载 ${totalFiles} 个文件...`, 0);
+    }
     
     while (stack.length > 0) {
         const entry = stack.pop();
@@ -239,6 +287,9 @@ export async function pullFromChain(
                 if (!dir_exists) {
                     // 目录不存在，创建目录
                     await adapter.mkdir(cur_dir_path);
+                    if (notifyProgress) {
+                        notifyProgress(`创建目录: ${cur_dir_path}`, Math.floor((processedFiles / totalFiles) * 100));
+                    }
                 }
                 
                 // 处理当前目录文件
@@ -246,10 +297,65 @@ export async function pullFromChain(
                     const cur_path = [...path_join, file.title].join('/');
                     const exists = await adapter.exists(cur_path, true);
                     
+                    if (notifyProgress) {
+                        notifyProgress(`正在处理: ${file.title} (${processedFiles + 1}/${totalFiles})`, Math.floor((processedFiles / totalFiles) * 100));
+                    }
+                    
                     if (!exists) {
-                        // 下载文件
-                        console.log("下载文件", file.title);
+                        // 文件不存在，直接下载
+                        console.log("下载新文件", file.title);
                         await downloadFile(file, cur_path, adapter);
+                        processedFiles++;
+                    } else {
+                        // 文件存在，比较差异
+                        console.log("检查文件差异", file.title);
+                        
+                        // 读取本地文件内容
+                        const localContent = await adapter.read(cur_path);
+                        
+                        // 获取链上文件内容
+                        const remoteContent = await downloadFileContent(file);
+                        
+                        // 比较内容
+                        if (localContent !== remoteContent) {
+                            console.log("文件内容不同，显示差异", file.title);
+                            
+                            if (app) {
+                                // 显示差异对话框
+                                await new Promise<void>((resolve) => {
+                                    const diffModal = new DiffModal(
+                                        app,
+                                        file.title,
+                                        localContent,
+                                        remoteContent,
+                                        async (content?: string) => {
+                                            // 用户选择更新（可能是链上版本或手动编辑的版本）
+                                            const finalContent = content || remoteContent;
+                                            console.log("用户选择更新文件", file.title);
+                                            await adapter.write(cur_path, finalContent);
+                                            resolve();
+                                        },
+                                        () => {
+                                            // 用户选择跳过
+                                            console.log("用户选择跳过文件", file.title);
+                                            resolve();
+                                        }
+                                    );
+                                    diffModal.open();
+                                });
+                            } else {
+                                // 如果没有app实例，直接覆盖
+                                await adapter.write(cur_path, remoteContent);
+                            }
+                        } else {
+                            console.log("文件内容相同，跳过", file.title);
+                        }
+                        processedFiles++;
+                    }
+                    
+                    if (notifyProgress) {
+                        const progress = Math.floor((processedFiles / totalFiles) * 100);
+                        notifyProgress(`已处理 ${file.title} (${processedFiles}/${totalFiles})`, progress);
                     }
                 }
                 
