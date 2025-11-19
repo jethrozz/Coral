@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SuiGraphQLClient } from "@mysten/sui/graphql";
-import { GRAPHQL_URL, GRAPHQL_URL_BACKUP } from "@/constants";
+import { GRAPHQL_URL } from "@/constants";
 
 /**
  * GraphQL API 代理路由
@@ -13,7 +13,7 @@ import { GRAPHQL_URL, GRAPHQL_URL_BACKUP } from "@/constants";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const urls = [GRAPHQL_URL, GRAPHQL_URL_BACKUP];
+    const urls = [GRAPHQL_URL];
     let lastError: Error | null = null;
 
     // 尝试使用多个 GraphQL 端点

@@ -11,7 +11,7 @@ import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount, useSignPersonalMessage } from "@mysten/dapp-kit"
 import { useNetworkVariable } from "@/lib/networkConfig"
 import { SuiClient } from "@mysten/sui/client"
-import { RPC_URL } from "@/constants"
+import { RPC_URL, PACKAGE_ID, SHOW_SUBSCRIPTION_STATS } from "@/constants"
 import { 
   getColumnById,
   getUserOwnedInstallments,
@@ -37,6 +37,7 @@ import {
 } from "@/lib/sealUtil"
 import { SessionKey } from "@mysten/seal"
 import { getMySubscriptions } from "@/contract/coral_column"
+import ReactMarkdown from "react-markdown"
 
 const TTL_MIN = 10
 
@@ -71,13 +72,19 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [columnId])
 
-  // 加载期刊列表
+  // 检查访问权限
   useEffect(() => {
     if (column?.id && currentAccount?.address) {
-      loadInstallments()
       checkAccess()
     }
   }, [column?.id, currentAccount?.address])
+
+  // 加载期刊列表（在权限检查后）
+  useEffect(() => {
+    if (column?.id && currentAccount?.address) {
+      loadInstallments()
+    }
+  }, [column?.id, currentAccount?.address, isCreator])
 
   const loadColumn = async () => {
     setLoading(true)
@@ -110,9 +117,14 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
     
     try {
       const installmentList = await getUserOwnedInstallments(column.id, currentAccount.address)
-      // 只显示已发布的期刊
-      const published = installmentList.filter((i) => i.is_published)
-      setInstallments(published.sort((a, b) => b.no - a.no))
+      
+      // 如果是创作者，显示所有期刊；否则只显示已发布的
+      let filteredInstallments = installmentList
+      if (!isCreator) {
+        filteredInstallments = installmentList.filter((i) => i.is_published)
+      }
+      
+      setInstallments(filteredInstallments.sort((a, b) => b.no - a.no))
     } catch (error) {
       console.error("加载期刊失败:", error)
     }
@@ -209,7 +221,7 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
       const suiClient = new SuiClient({ url: RPC_URL })
       const sessionKey = await SessionKey.create({
         address: currentAccount.address,
-        packageId,
+        packageId: PACKAGE_ID,
         ttlMin: TTL_MIN,
         suiClient,
       })
@@ -243,25 +255,59 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
     if (!selectedInstallment || !column) return
 
     try {
+      // 确保所有 ID 都是字符串
+      const fileId = typeof file.id === 'string' ? file.id : (file.id as any)?.id || String(file.id)
+      const installmentId = typeof selectedInstallment.id === 'string' ? selectedInstallment.id : (selectedInstallment.id as any)?.id || String(selectedInstallment.id)
+      const columnIdForMoveCall = typeof column.id === 'string' ? column.id : (column.id as any)?.id || String(column.id)
+      
+      // 确保订阅相关的 ID 都是字符串
+      const subscriptionId = subscription?.id ? (typeof subscription.id === 'string' ? subscription.id : (subscription.id as any)?.id || String(subscription.id)) : ''
+      const paymentMethodId = column.payment_method?.id ? (typeof column.payment_method.id === 'string' ? column.payment_method.id : (column.payment_method.id as any)?.id || String(column.payment_method.id)) : ''
+      const columnCapId = columnCap?.id ? (typeof columnCap.id === 'string' ? columnCap.id : (columnCap.id as any)?.id || String(columnCap.id)) : ''
+      
+      console.log("decryptFile - 使用的 ID:", {
+        packageId: PACKAGE_ID,
+        fileId,
+        installmentId,
+        columnIdForMoveCall,
+        columnCapId,
+        subscriptionId,
+        paymentMethodId
+      })
+
+      // 验证所有必需的 ID 都存在且为有效字符串
+      if (!fileId || !installmentId || !columnIdForMoveCall) {
+        throw new Error("缺少必需的文件或期刊信息")
+      }
+
       let moveCallConstructor: MoveCallConstructor
 
-      if (isCreator && columnCap) {
+      if (isCreator && columnCap && columnCapId) {
         // 创作者
+        console.log("decryptFile - creator")
+        if (!columnCapId) {
+          throw new Error("缺少 ColumnCap ID")
+        }
         moveCallConstructor = constructCreatorMoveCall(
-          packageId,
-          columnCap.id,
-          column.id,
-          file.id
+          PACKAGE_ID,
+          columnCapId,
+          columnIdForMoveCall,
+          fileId
         )
-      } else if (subscription && column.payment_method) {
+      } else if (subscription && column.payment_method && subscriptionId && paymentMethodId) {
         // 订阅者
+        console.log("decryptFile - sub")
+
+        if (!subscriptionId || !paymentMethodId) {
+          throw new Error("缺少订阅或支付方式信息")
+        }
         moveCallConstructor = constructSubscribeMoveCall(
-          packageId,
-          subscription.id,
-          column.id,
-          column.payment_method.id,
-          file.id,
-          selectedInstallment.id
+          PACKAGE_ID,
+          subscriptionId,
+          columnIdForMoveCall,
+          paymentMethodId,
+          fileId,
+          installmentId
         )
       } else {
         throw new Error("无访问权限")
@@ -335,7 +381,9 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
             <p className="text-sm text-muted-foreground line-clamp-2">{column.desc}</p>
             <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
               <span>{installments.length} {t("myColumns.issues")}</span>
-              <span>{column.subscriptions} {t("myColumns.subscribers")}</span>
+              {SHOW_SUBSCRIPTION_STATS && (
+                <span>{column.subscriptions} {t("myColumns.subscribers")}</span>
+              )}
             </div>
           </div>
 
@@ -473,10 +521,10 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
                   </Card>
                 )}
                 {decryptedFiles.has(selectedFile.id) ? (
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <pre className="whitespace-pre-wrap font-sans text-sm">
-                      {decryptedFiles.get(selectedFile.id)}
-                    </pre>
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:text-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-foreground prose-pre:bg-muted prose-pre:text-foreground">
+                    <ReactMarkdown>
+                      {decryptedFiles.get(selectedFile.id) || ""}
+                    </ReactMarkdown>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center">

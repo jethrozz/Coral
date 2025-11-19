@@ -111,6 +111,10 @@ export default function CreateColumnPage() {
       tx.setSender(currentAccount.address);
       const price = BigInt(Math.round(priceNumber * 1e9));
 
+      // 将订阅时长从天数转换为毫秒数（1天 = 86400000毫秒）
+      const subscriptionTimeDays = parseInt(formData.subscription_time, 10) || 0
+      const subscriptionTimeMs = subscriptionTimeDays * 86400000
+      
       const payment = tx.moveCall({
       target: `${packageId}::coral_market::create_payment_method`,
       arguments: [
@@ -119,7 +123,7 @@ export default function CreateColumnPage() {
         ), // 取你实际支持的 coin_type 字符串
         tx.pure.u64(9), // decimals
         tx.pure.u64(price), // fee
-        tx.pure.u64(parseInt(formData.subscription_time, 10) || 0), // subscription_time
+        tx.pure.u64(subscriptionTimeMs), // subscription_time (毫秒数)
         tx.object(marketConfigId), // &MarketConfig
         tx.object(globalConfigId), // &GlobalConfig
       ],

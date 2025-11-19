@@ -2,17 +2,12 @@ import { SuiGraphQLClient } from "@mysten/sui/graphql";
 import { graphql } from "@mysten/sui/graphql/schemas/latest";
 import {
   COLUMN_CAP_TYPE,
-  COLUMN_CAP_TYPE_OLD,
   INSTALLMENT_TYPE,
-  INSTALLMENT_TYPE_OLD,
   UPDATE_TYPE,
-  UPDATE_TYPE_OLD,
   PAYMENT_TYPE,
-  PAYMENT_TYPE_OLD,
   SUBSCRIPTION_TYPE,
   GRAPHQL_URL,
   COLUMN_TYPE,
-  COLUMN_TYPE_OLD,
 } from "@/constants";
 import {
   ColumnCap,
@@ -31,6 +26,7 @@ import {
   queryObjectsByIds,
 } from "@/contract/coral_server";
 import { Transaction } from '@mysten/sui/transactions';
+import { MARKET_ID, GLOBAL_CONFIG_ID } from "@/constants";
 
 // 获取我的订阅
 export async function getMySubscriptions(
@@ -44,12 +40,14 @@ export async function getMySubscriptions(
     return (
       data?.address?.objects?.edges.map((edge: any) => {
         const json = edge.node.contents?.json;
+        // 确保 column_id 是字符串类型
+        const columnId = typeof json.column_id === 'string' ? json.column_id : (json.column_id as any)?.id || String(json.column_id)
         return {
           id: json.id,
-          column_id: json.column_id,
+          column_id: columnId,
           created_at: new Date(parseInt(json.created_at)),
           sub_start_time: new Date(parseInt(json.sub_start_time)),
-          column: {} as ColumnOtherInfo,
+          column: {} as ColumnOtherInfo, // 稍后填充
         } as Subscription;
       }) || []
     );
@@ -63,311 +61,397 @@ export async function getMySubscriptions(
       query: queryByAddressAndType,
       variables: { address, type, cursor: endCursor },
     });
-    let subCap = parseSubscriptionData(currentPage.data);
-    result.push(...subCap);
-
-    const columnIds = subCap.map((c: Subscription) => c.column_id);
-    const otherInfos = await getColumnsByIds(columnIds);
-    for (const otherInfo of otherInfos) {
-      const subscription = result.find((c) => c.column_id === otherInfo.id);
-      if (subscription) {
-        subscription.column = otherInfo;
-      }
-    }
-
+    const subscriptions = parseSubscriptionData(currentPage.data);
+    result.push(...subscriptions);
     endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
     hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
 
+  // 收集所有 column_id，批量查询专栏详细信息
+  const columnIds = result.map((sub) => {
+    const columnId = typeof sub.column_id === 'string' ? sub.column_id : (sub.column_id as any)?.id || String(sub.column_id)
+    return columnId
+  }).filter((id) => id && id.length > 0)
+
+  if (columnIds.length > 0) {
+    // 批量查询专栏详细信息
+    const columns = await getColumnsByIds(columnIds)
+    const columnMap = new Map<string, ColumnOtherInfo>()
+    columns.forEach((col) => {
+      const colId = typeof col.id === 'string' ? col.id : (col.id as any)?.id || String(col.id)
+      columnMap.set(colId, col)
+    })
+
+    // 填充订阅中的 column 信息
+    result.forEach((sub) => {
+      const columnId = typeof sub.column_id === 'string' ? sub.column_id : (sub.column_id as any)?.id || String(sub.column_id)
+      const columnInfo = columnMap.get(columnId)
+      if (columnInfo) {
+        sub.column = columnInfo
+      }
+    })
+  }
+
   return result;
 }
 
-// 获取所有专栏
-export async function getAllColumns(): Promise<Array<ColumnOtherInfo>> {
-  try {
-    let data: any;
-
-    // 在浏览器环境中，使用 API 代理避免 CORS 问题
-      // 在服务器端，直接使用 GraphQL 客户端
-      console.log('服务器端直接查询 GraphQL');
-      const urls = [GRAPHQL_URL];
-      let lastError: Error | null = null;
-
-      for (const url of urls) {
-        try {
-          const suiGraphQLClient = new SuiGraphQLClient({ url });
-          const result = await suiGraphQLClient.query({
-            query: getObjectsByType,
-            variables: { type: COLUMN_TYPE, limit: 20, cursor: null },
-          });
-          data = result.data;
-          break;
-        } catch (error) {
-          console.error(`GraphQL 端点 ${url} 请求失败:`, error);
-          lastError = error as Error;
-          continue;
-        }
-      }
-
-      if (!data) {
-        throw lastError || new Error("无法连接到任何 GraphQL 端点");
-      }
-
-    console.log("getAllColumns data", data);
-
-    let nodes = data?.objects?.nodes as any[];
-    let ids = [];
-    if (nodes && nodes.length > 0) {
-      for (let i = 0; i < nodes.length; i++) {
-        const json = nodes[i].asMoveObject?.contents?.json;
-        if (json && json.id) {
-          ids.push(json.id);
-        }
-      }
-      return getColumnsByIds(ids);
-    }
+// 获取专栏的详细信息（包括更新方式、支付方式、所有期刊等）
+export async function getColumnsByIds(
+  ids: string[]
+): Promise<Array<ColumnOtherInfo>> {
+  if (!ids || ids.length === 0) {
     return [];
-  } catch (error) {
-    console.error("getAllColumns 失败:", error);
-    throw error;
-  }
-}
-
-// 获取单个期刊
-export async function getOneInstallment(
-  id: string
-): Promise<InstallmentWithFiles | null> {
-  const objects = await queryObjectsByIds([id]);
-  
-  if (objects.length === 0) {
-    return null;
   }
 
-  const json = objects[0].json;
-  const fileIds = json.files || [];
+  // 确保所有 ID 都是字符串类型
+  const validIds = ids
+    .map((id) => {
+      if (id && typeof id === "object" && "id" in id) {
+        return String((id as any).id).trim();
+      }
+      if (typeof id === "string") {
+        return id.trim();
+      }
+      return id != null ? String(id).trim() : "";
+    })
+    .filter((id) => id.length > 0);
 
-  let installment: InstallmentWithFiles = {
-    id: json.id,
-    belong_column: json.belong_column,
-    no: json.no,
-    files: [],
-  };
+  if (validIds.length === 0) {
+    console.warn("getColumnsByIds: No valid IDs provided", ids);
+    return [];
+  }
 
-  if (fileIds.length > 0) {
-    const fileObjects = await queryObjectsByIds(fileIds);
-    for (const fileObj of fileObjects) {
-      const fileJson = fileObj.json;
-      installment.files.push({
-        id: fileJson.id,
-        title: fileJson.title,
-        belong_dir: fileJson.belong_dir,
-        blob_id: fileJson.blob_id,
-        end_epoch: fileJson.end_epoch,
-        created_at: new Date(parseInt(fileJson.created_at)),
-        updated_at: new Date(parseInt(fileJson.updated_at)),
-        content: "",
-      });
+  console.log("getColumnsByIds - 查询专栏 IDs:", validIds);
+
+  // 使用 RPC 查询专栏对象
+  const columnObjects = await queryObjectsByIds(validIds);
+  console.log("getColumnsByIds - 查询到的专栏对象数量:", columnObjects.length);
+
+  const colOtherInfoMap = new Map<string, ColumnOtherInfo>();
+
+  // 建立 update_method 和 payment_method ID 到 column ID 的映射
+  const updateMethodToColumnMap = new Map<string, string>()
+  const paymentMethodToColumnMap = new Map<string, string>()
+
+  // 解析 Column 对象
+  for (const obj of columnObjects) {
+    const type = obj.type;
+    const json = obj.json;
+    if (!json) continue;
+
+    if (type === COLUMN_TYPE) {
+      // 确保 ID 是字符串类型
+      const objectId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+      
+      const colOtherInfo: ColumnOtherInfo = {
+        id: objectId,
+        name: json.name || "",
+        desc: json.desc || "",
+        cover_img_url: json.cover_img_url || "",
+        creator: json.creator || "",
+        update_at: json.updated_at ? new Date(parseInt(json.updated_at)) : new Date(parseInt(json.created_at || "0")),
+        status: parseInt(json.status) || 0,
+        subscriptions: json.subscriptions ? (typeof json.subscriptions === 'object' && 'size' in json.subscriptions ? json.subscriptions.size : 0) : 0,
+        plan_installment_number: parseInt(json.plan_installment_number) || 0,
+        all_installment: [],
+        all_installment_ids: [],
+        update_method: null,
+        payment_method: null,
+        balance: 0,
+        is_rated: json.is_rated || false,
+      };
+      colOtherInfoMap.set(objectId, colOtherInfo);
+
+      // 建立 update_method 和 payment_method 到 column 的映射
+      if (json.update_method) {
+        const updateMethodId = typeof json.update_method === 'string' ? json.update_method : (json.update_method as any)?.id || String(json.update_method)
+        if (updateMethodId) {
+          updateMethodToColumnMap.set(updateMethodId, objectId)
+        }
+      }
+      if (json.payment_method) {
+        const paymentMethodId = typeof json.payment_method === 'string' ? json.payment_method : (json.payment_method as any)?.id || String(json.payment_method)
+        if (paymentMethodId) {
+          paymentMethodToColumnMap.set(paymentMethodId, objectId)
+        }
+      }
     }
   }
 
-  return installment;
+  // 收集所有需要查询的相关对象 ID
+  const allRelatedIds: string[] = [];
+  for (const obj of columnObjects) {
+    const json = obj.json;
+    if (!json) continue;
+
+    // 收集 update_method, payment_method, all_installment 的 ID
+    if (json.update_method) {
+      const updateMethodId = typeof json.update_method === 'string' ? json.update_method : (json.update_method as any)?.id || String(json.update_method)
+      if (updateMethodId && !allRelatedIds.includes(updateMethodId)) {
+        allRelatedIds.push(updateMethodId);
+      }
+    }
+    if (json.payment_method) {
+      const paymentMethodId = typeof json.payment_method === 'string' ? json.payment_method : (json.payment_method as any)?.id || String(json.payment_method)
+      if (paymentMethodId && !allRelatedIds.includes(paymentMethodId)) {
+        allRelatedIds.push(paymentMethodId);
+      }
+    }
+    if (json.all_installment && Array.isArray(json.all_installment)) {
+      for (const installmentId of json.all_installment) {
+        const id = typeof installmentId === 'string' ? installmentId : (installmentId as any)?.id || String(installmentId)
+        if (id && !allRelatedIds.includes(id)) {
+          allRelatedIds.push(id);
+        }
+      }
+    }
+  }
+
+  console.log("getColumnsByIds - 收集到的相关对象 IDs:", allRelatedIds.length);
+
+  // 批量查询所有相关对象
+  const otherObjects = await queryObjectsByIds(allRelatedIds);
+  console.log("getColumnsByIds - 查询到的相关对象数量:", otherObjects.length);
+
+  // 解析相关对象并填充到 ColumnOtherInfo 中
+  for (const obj of otherObjects) {
+    const type = obj.type;
+    const json = obj.json;
+    if (!json) continue;
+
+    // 确保 ID 是字符串类型
+    const objectId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+
+    if (type === UPDATE_TYPE) {
+      // 通过映射找到对应的 column ID
+      const columnId = updateMethodToColumnMap.get(objectId)
+      if (columnId) {
+        const otherInfo = colOtherInfoMap.get(columnId)
+        if (otherInfo) {
+          otherInfo.update_method = {
+            id: objectId,
+            since: new Date(parseInt(json.since)),
+            day_number: json.day_number,
+            installment_number: json.installment_number,
+          };
+        }
+      }
+    } else if (type === PAYMENT_TYPE) {
+      // 通过映射找到对应的 column ID
+      const columnId = paymentMethodToColumnMap.get(objectId)
+      if (columnId) {
+        const otherInfo = colOtherInfoMap.get(columnId)
+        if (otherInfo) {
+          otherInfo.payment_method = {
+            id: objectId,
+            pay_type: json.pay_type,
+            coin_type: json.coin_type,
+            decimals: json.decimals,
+            fee: json.fee / 1000000000, // 转换为SUI单位
+            subscription_time: json.subscription_time,
+          };
+        }
+      }
+    } else if (type === INSTALLMENT_TYPE) {
+      const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
+      const otherInfo = colOtherInfoMap.get(belongColumnId)
+      if (otherInfo) {
+        otherInfo.all_installment.push({
+          id: objectId,
+          belong_column: belongColumnId,
+          no: json.no,
+          files: json.files || [],
+          is_published: json.is_published || false,
+          published_at: json.published_at,
+        });
+      } else {
+        console.warn(`getColumnsByIds - 未找到对应的 ColumnOtherInfo，installment ID: ${objectId}, belong_column: ${belongColumnId}`)
+        console.log(`getColumnsByIds - colOtherInfoMap keys:`, Array.from(colOtherInfoMap.keys()))
+      }
+    }
+  }
+
+  // 为每个 ColumnOtherInfo 填充 all_installment_ids
+  for (const [id, info] of colOtherInfoMap.entries()) {
+    info.all_installment_ids = info.all_installment.map((i) => i.id);
+  }
+
+  return Array.from(colOtherInfoMap.values());
 }
 
-// 获取用户拥有的期刊（通过 Column ID，兼容新旧版本）
+// 获取用户拥有的所有期刊（通过 Column 对象查询）
 export async function getUserOwnedInstallments(
-  columnId: string,
-  userAddress?: string
+  columnId: string | { id: string },
+  address: string
 ): Promise<Array<Installment>> {
-  let result: Installment[] = [];
+  try {
+    // 确保 columnId 是字符串类型
+    const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+    
+    console.log("getUserOwnedInstallments objects", [columnIdStr]);
+    const objects = await queryObjectsByIds([columnIdStr]);
+    console.log("getUserOwnedInstallments json", objects[0]?.json);
 
-  // 通过对象 ID 查询 Column（不依赖类型，兼容新旧版本）
-  const objects = await queryObjectsByIds([columnId]);
-  console.log("getUserOwnedInstallments objects", objects);
+    if (objects.length === 0 || !objects[0]?.json) {
+      console.warn("getUserOwnedInstallments - 未找到专栏对象");
+      // 如果直接查询失败，尝试使用 getAllInstallmentsByColumnId
+      return await getAllInstallmentsByColumnId(columnIdStr, address);
+    }
 
-  let installmentIds: string[] = [];
-  if (objects.length > 0) {
     const json = objects[0].json;
-    console.log("getUserOwnedInstallments json", json);
-    if (json && json.all_installment && Array.isArray(json.all_installment)) {
+    let installmentIds: string[] = [];
+
+    // 确保 all_installment 是数组
+    if (json.all_installment && Array.isArray(json.all_installment)) {
       // 确保所有 ID 都是字符串类型
       installmentIds = json.all_installment
         .map((id: any) => String(id).trim())
         .filter((id: string) => id.length > 0);
     }
-  }
 
-  // 如果从 Column 获取到了期刊 ID，直接通过对象 ID 查询
-  if (installmentIds.length > 0) {
+    if (installmentIds.length === 0) {
+      console.log("getUserOwnedInstallments - 专栏没有期刊");
+      return [];
+    }
+
     console.log("getUserOwnedInstallments - 准备查询期刊 IDs:", installmentIds);
     const installmentObjects = await queryObjectsByIds(installmentIds);
     console.log("getUserOwnedInstallments - 查询到的期刊对象:", installmentObjects);
     console.log("getUserOwnedInstallments - 查询到的期刊对象数量:", installmentObjects.length);
-    
-    for (const obj of installmentObjects) {
-      const installmentJson = obj.json;
-      console.log("getUserOwnedInstallments - 检查期刊:", {
-        id: installmentJson?.id,
-        belong_column: installmentJson?.belong_column,
-        columnId: columnId,
-        match: installmentJson?.belong_column === columnId,
-        no: installmentJson?.no,
-        is_published: installmentJson?.is_published
-      });
-      
-      if (installmentJson) {
-        // 不检查 belong_column，因为我们已经通过 Column 的 all_installment 获取了这些 ID
-        result.push({
-          id: installmentJson.id,
-          belong_column: installmentJson.belong_column,
-          no: installmentJson.no,
-          files: installmentJson.files || [],
-          is_published: installmentJson.is_published || false,
-          published_at: installmentJson.published_at,
-        });
-      }
-    }
-    console.log("getUserOwnedInstallments - 最终结果:", result);
-  } else {
-    // 如果没有从 Column 获取到期刊 ID，尝试通过类型查询（需要用户地址）
-    if (userAddress) {
-      console.log(`Column ${columnId} 中未找到期刊 ID，尝试通过类型查询用户 ${userAddress} 的所有期刊`);
-      result = await getAllInstallmentsByColumnId(columnId, userAddress);
-    } else {
-      console.warn(`无法从 Column ${columnId} 获取期刊列表，且未提供用户地址，无法通过类型查询`);
-    }
-  }
 
-  return result;
+    const result: Installment[] = [];
+    for (const obj of installmentObjects) {
+      const json = obj.json;
+      if (!json) continue;
+
+      // 确保 ID 是字符串类型
+      const installmentId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+      const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
+      
+      // 检查是否属于该专栏（虽然理论上应该都是，但为了安全还是检查一下）
+      const columnIdToMatch = typeof columnId === 'string' ? columnId : (columnId as any)?.id || columnIdStr
+      console.log("getUserOwnedInstallments - 检查期刊:", {
+        id: installmentId,
+        belong_column: belongColumnId,
+        columnId: columnIdToMatch,
+        match: belongColumnId === columnIdToMatch,
+        no: json.no,
+      });
+
+      result.push({
+        id: installmentId,
+        belong_column: belongColumnId,
+        no: parseInt(json.no) || 0,
+        files: json.files || [],
+        is_published: json.is_published || false,
+        published_at: json.published_at,
+      });
+    }
+
+    console.log("getUserOwnedInstallments - 最终结果:", result);
+    return result;
+  } catch (error) {
+    console.error("getUserOwnedInstallments 失败:", error);
+    // 如果出错，尝试使用 getAllInstallmentsByColumnId 作为后备方案
+    const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+    return await getAllInstallmentsByColumnId(columnIdStr, address);
+  }
 }
 
-// 通过类型查询所有期刊，然后过滤出属于指定 Column 的（兼容新旧版本）
-// 注意：这个函数需要用户地址来查询，如果 Column 查询失败时使用
-async function getAllInstallmentsByColumnId(
+// 根据专栏 ID 获取所有期刊（通过类型查询）
+export async function getAllInstallmentsByColumnId(
   columnId: string,
-  userAddress?: string
+  address: string
 ): Promise<Array<Installment>> {
   const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
   const result: Installment[] = [];
 
-  // 如果没有用户地址，无法通过类型查询，返回空数组
-  if (!userAddress) {
-    return result;
-  }
-
-  const parseInstallmentData = (data: any, columnId: string) => {
-    return (
-      data?.address?.objects?.edges
-        ?.map((edge: any) => {
-          const json = edge.node.contents?.json;
-          // 只返回属于指定 Column 的期刊
-          if (json && json.belong_column === columnId) {
-            return {
-              id: json.id,
-              belong_column: json.belong_column,
-              no: json.no,
-              files: json.files || [],
-              is_published: json.is_published || false,
-              published_at: json.published_at,
-            } as Installment;
-          }
-          return null;
-        })
-        .filter((item: Installment | null) => item !== null) || []
-    );
-  };
-
-  // 查询新版本的期刊
   let endCursor: string | null | undefined = null;
   let hasNextPage = false;
+
   do {
     const currentPage: any = await suiGraphQLClient.query({
-      query: queryByAddressAndType,
-      variables: { 
-        address: userAddress,
-        type: INSTALLMENT_TYPE, 
-        cursor: endCursor 
-      },
+      query: getObjectsByType,
+      variables: { type: INSTALLMENT_TYPE, limit: 20, cursor: endCursor },
     });
-    result.push(...parseInstallmentData(currentPage.data, columnId));
-    
-    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
-    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
+    const data = currentPage.data;
+    const nodes = data?.objects?.nodes as any[];
+    if (nodes && nodes.length > 0) {
+      for (let i = 0; i < nodes.length; i++) {
+        const json = nodes[i].asMoveObject?.contents?.json;
+        if (json && json.belong_column) {
+          const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
+          const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+          if (belongColumnId === columnIdStr) {
+            const installmentId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+            // 避免重复添加
+            if (!result.find((r) => r.id === installmentId)) {
+              result.push({
+                id: installmentId,
+                belong_column: belongColumnId,
+                no: parseInt(json.no) || 0,
+                files: json.files || [],
+                is_published: json.is_published || false,
+                published_at: json.published_at,
+              });
+            }
+          }
+        }
+      }
+    }
+    endCursor = data?.objects?.pageInfo?.endCursor;
+    hasNextPage = data?.objects?.pageInfo?.hasNextPage || false;
   } while (hasNextPage);
 
-  // 查询旧版本的期刊
-  endCursor = null;
-  hasNextPage = false;
-  do {
-    const currentPage: any = await suiGraphQLClient.query({
-      query: queryByAddressAndType,
-      variables: { 
-        address: userAddress,
-        type: INSTALLMENT_TYPE_OLD, 
-        cursor: endCursor 
-      },
-    });
-    result.push(...parseInstallmentData(currentPage.data, columnId));
-    
-    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
-    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
-  } while (hasNextPage);
-
-  // 去重（基于对象 ID）
-  const uniqueResult = Array.from(
-    new Map(result.map((inst) => [inst.id, inst])).values()
-  );
-
-  return uniqueResult;
+  return result;
 }
 
-// 获取用户拥有的专栏（同时查询新旧版本）
 export async function getUserOwnedColumns(
   address: string
 ): Promise<Array<ColumnCap>> {
   const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
   const result: ColumnCap[] = [];
 
-  const parseColumnData = (data: any) => {
+  // 解析 ColumnCap 对象（权限对象，只包含基本权限信息）
+  const parseColumnCapData = (data: any) => {
     return (
       data?.address?.objects?.edges.map((edge: any) => {
         const json = edge.node.contents?.json;
+        // 确保 ID 都是字符串类型
+        const capId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id);
+        const columnId = typeof json.column_id === 'string' ? json.column_id : (json.column_id as any)?.id || String(json.column_id);
         return {
-          id: json.id,
-          name: json.name,
-          description: json.description,
-          column_id: json.column_id,
-          link: json.link,
-          image_url: json.image_url,
-          project_url: json.project_url,
+          id: capId,
+          column_id: columnId, // ColumnCap 中的 column_id 指向实际的 Column 对象
           creator: json.creator,
-          other: {
-            update_method: null,
-            payment_method: null,
-          } as ColumnOtherInfo,
           created_at: new Date(parseInt(json.created_at)),
-        } as ColumnCap;
+        } as Partial<ColumnCap>;
       }) || []
     );
   };
 
-  // 查询新版本的专栏
   let endCursor: string | null | undefined = null;
   let hasNextPage = false;
+  const allColumnIds: string[] = [];
+  const columnCapMap = new Map<string, Partial<ColumnCap>>();
 
   do {
     const currentPage: any = await suiGraphQLClient.query({
       query: queryByAddressAndType,
       variables: { address, type: COLUMN_CAP_TYPE, cursor: endCursor },
     });
-    let columnCap = parseColumnData(currentPage.data);
-    result.push(...columnCap);
-
-    const columnIds = columnCap.map((c: ColumnCap) => c.column_id);
-    const otherInfos = await getColumnsByIds(columnIds);
-    for (const otherInfo of otherInfos) {
-      const columnCapItem = result.find((c) => c.column_id === otherInfo.id);
-      if (columnCapItem) {
-        columnCapItem.other = otherInfo;
+    let columnCaps = parseColumnCapData(currentPage.data);
+    
+    // 收集所有 column_id 并建立映射
+    for (const cap of columnCaps) {
+      if (cap.column_id) {
+        allColumnIds.push(cap.column_id);
+        if (cap.id) {
+          // 如果同一个 column_id 有多个 ColumnCap，保留第一个
+          if (!columnCapMap.has(cap.column_id)) {
+            columnCapMap.set(cap.column_id, cap);
+          }
+        }
       }
     }
 
@@ -375,155 +459,106 @@ export async function getUserOwnedColumns(
     hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
 
-  // 查询旧版本的专栏
-  endCursor = null;
-  hasNextPage = false;
+  // 去重 column_id
+  const uniqueColumnIds = Array.from(new Set(allColumnIds));
+  console.log("getUserOwnedColumns - 收集到的 column_ids:", uniqueColumnIds);
+  console.log("getUserOwnedColumns - ColumnCap 映射数量:", columnCapMap.size);
 
-  do {
-    const currentPage: any = await suiGraphQLClient.query({
-      query: queryByAddressAndType,
-      variables: { address, type: COLUMN_CAP_TYPE_OLD, cursor: endCursor },
-    });
-    let columnCap = parseColumnData(currentPage.data);
-    result.push(...columnCap);
+  // 根据 column_id 查询所有 Column 对象的详细信息
+  const columnInfos = await getColumnsByIds(uniqueColumnIds);
+  console.log("getUserOwnedColumns - 查询到的 Column 详细信息数量:", columnInfos.length);
 
-    const columnIds = columnCap.map((c: ColumnCap) => c.column_id);
-    const otherInfos = await getColumnsByIds(columnIds);
-    for (const otherInfo of otherInfos) {
-      const columnCapItem = result.find((c) => c.column_id === otherInfo.id);
-      if (columnCapItem) {
-        columnCapItem.other = otherInfo;
-      }
+  // 将 Column 的详细信息填充到 ColumnCap 中
+  for (const columnInfo of columnInfos) {
+    // 确保 columnInfo.id 是字符串类型
+    const columnIdStr = typeof columnInfo.id === 'string' ? columnInfo.id : (columnInfo.id as any)?.id || String(columnInfo.id);
+    const columnCap = columnCapMap.get(columnIdStr);
+    if (columnCap) {
+      const fullColumnCap: ColumnCap = {
+        id: columnCap.id!,
+        column_id: columnIdStr,
+        name: columnInfo.name, // 从 Column 对象获取
+        description: columnInfo.desc, // 从 Column 对象获取
+        link: "", // ColumnCap 中可能没有，使用空字符串
+        image_url: columnInfo.cover_img_url, // 从 Column 对象获取
+        project_url: "", // ColumnCap 中可能没有，使用空字符串
+        creator: columnInfo.creator, // 从 Column 对象获取
+        created_at: columnCap.created_at!,
+        other: columnInfo, // 完整的 ColumnOtherInfo
+      };
+      result.push(fullColumnCap);
+    } else {
+      console.warn(`getUserOwnedColumns - 未找到对应的 ColumnCap，column_id:`, columnInfo.id, `(类型: ${typeof columnInfo.id})`);
+      console.log(`getUserOwnedColumns - columnCapMap keys:`, Array.from(columnCapMap.keys()));
     }
+  }
 
-    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
-    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
-  } while (hasNextPage);
-
-  // 去重（基于对象 ID）
-  const uniqueResult = Array.from(
-    new Map(result.map((col) => [col.id, col])).values()
-  );
-
-  return uniqueResult;
+  console.log("getUserOwnedColumns - 最终结果数量:", result.length);
+  return result;
 }
 
-export async function createColumn({
-  address,
-  name,
-  desc,
-  cover_img_url,
-  plan_installment_number,
-  is_rated,
-  update_since_date,
-  update_day_number,
-  update_installment_number,
-  pay_type,
-  fee,
-  subscription_time,
-  
-}: {
-  address: string;
-  name: string;
-  desc: string;
-  cover_img_url: string;
-  plan_installment_number: string;
-  is_rated: boolean;
-  update_since_date: string;
-  update_day_number: string;
-  update_installment_number: string;
-  pay_type: string;
-  fee: number;
-  subscription_time: string;
-}, signAndExecuteTransaction: any) {
+export async function getAllColumns(): Promise<Array<ColumnOtherInfo>> {
   try {
-    const tx = new Transaction();
-    tx.setSender(address);
+    const urls = [GRAPHQL_URL];
+    let lastError: Error | null = null;
+    const allIds: string[] = [];
 
-    // ========= 1. create_payment_method =========
-    // price (SUI) -> fee (最小单位，* 10^9)
-    const priceNumber = Number(fee);
-    if (Number.isNaN(priceNumber) || priceNumber <= 0) {
-      toast({
-        title: "Error",
-        description: "Invalid price",
-        variant: "destructive",
-      });
-      return;
+    for (const url of urls) {
+      try {
+        const suiGraphQLClient = new SuiGraphQLClient({ url });
+        let endCursor: string | null | undefined = null;
+        let hasNextPage = false;
+
+        do {
+          const result: any = await suiGraphQLClient.query({
+            query: getObjectsByType,
+            variables: { type: COLUMN_TYPE, limit: 20, cursor: endCursor },
+          });
+          const data: any = result.data;
+          const nodes = data?.objects?.nodes as any[];
+          if (nodes && nodes.length > 0) {
+            for (let i = 0; i < nodes.length; i++) {
+              const json = nodes[i].asMoveObject?.contents?.json;
+              if (json && json.id) {
+                // 只收集已发布的专栏（status === 1）
+                const status = parseInt(json.status) || 0;
+                if (status === 1) {
+                  const columnId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id);
+                  // 避免重复添加
+                  if (!allIds.includes(columnId)) {
+                    allIds.push(columnId);
+                  }
+                }
+              }
+            }
+          }
+          endCursor = data?.objects?.pageInfo?.endCursor;
+          hasNextPage = data?.objects?.pageInfo?.hasNextPage || false;
+        } while (hasNextPage);
+
+        break;
+      } catch (error) {
+        console.error(`GraphQL 端点 ${url} 请求失败:`, error);
+        lastError = error as Error;
+        continue;
+      }
     }
-    const fee = BigInt(Math.round(priceNumber * 1e9));
 
-    const payment = tx.moveCall({
-      target: `${packageId}::coral_market::create_payment_method`,
-      arguments: [
-        tx.pure.u8(parseInt(pay_type, 10)), // pay_type: u8
-        tx.pure.string("0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-        ), // 取你实际支持的 coin_type 字符串
-        tx.pure.u64(9), // decimals
-        tx.pure.u64(fee), // fee
-        tx.pure.u64(parseInt(subscription_time, 10) || 0), // subscription_time
-        tx.object(marketConfigId), // &MarketConfig
-        tx.object(globalConfigId), // &GlobalConfig
-      ],
-    });
-
-    // ========= 2. create_update_method =========
-    const sinceMs = new Date(update_since_date).getTime(); // 毫秒
-    if (!sinceMs || Number.isNaN(sinceMs)) {
-      toast({
-        title: "Error",
-        description: "Invalid start date",
-        variant: "destructive",
-      });
-      return;
+    if (allIds.length === 0) {
+      console.log("getAllColumns - 未找到已发布的专栏");
+      return [];
     }
 
-    const updateMethod = tx.moveCall({
-      target: `${packageId}::perlite_market::create_update_method`,
-      arguments: [
-        tx.pure.u64(BigInt(sinceMs)), // since: u64 (ms)
-        tx.pure.u64(parseInt(update_day_number, 10) || 0), // day_number
-        tx.pure.u64(parseInt(update_installment_number, 10) || 0), // installment_number
-        tx.object(globalConfigId), // &GlobalConfig
-      ],
-    });
+    console.log(`getAllColumns - 收集到的已发布专栏 IDs: ${allIds.length}`, allIds);
 
-    // ========= 3. create_column =========
-    tx.moveCall({
-      target: `${packageId}::perlite_market::create_column`,
-      arguments: [
-        tx.pure.string(name), // name
-        tx.pure.string(desc), // desc
-        tx.pure.string(cover_img_url), // cover_img_url
-        tx.object(updateMethod), // UpdateMethod
-        tx.object(payment), // PaymentMethod
-        tx.pure.bool(is_rated), // is_rated
-        tx.pure.u64(parseInt(plan_installment_number, 10) || 0), // plan_installment_number
-        tx.object("0x6"), // Clock
-        tx.object(globalConfigId), // &GlobalConfig
-      ],
-    });
-
-    // ========= 4. 发送交易 =========
-    signAndExecuteTransaction(
-      { transaction: tx, chain },
-      {
-        onSuccess: (result) => {
-          alert("Create successful: " + result.digest);
-          setShowCreateModal(false);
-          setTimeout(() => {
-            window.location.reload();
-          }, 800);
-        },
-        onError: (error) => {
-          alert("Failed to create column. " + JSON.stringify(error));
-          console.error("Transaction failed:", error);
-        },
-      },
-    );
+    const columns = await getColumnsByIds(allIds);
+    // 再次过滤确保只返回已发布的专栏
+    const publishedColumns = columns.filter((col) => col.status === 1);
+    console.log(`getAllColumns - 查询到的专栏总数: ${columns.length}, 已发布: ${publishedColumns.length}`);
+    return publishedColumns;
   } catch (error) {
-    alert("Failed to create column. Please try again.");
-    console.error("Failed to create column:", error);
+    console.error("getAllColumns 失败:", error);
+    throw error;
   }
 }
 
@@ -533,125 +568,57 @@ export async function getColumnById(id: string): Promise<ColumnOtherInfo | null>
   return columns.length > 0 ? columns[0] : null;
 }
 
-// 根据ID数组获取专栏详细信息
-async function getColumnsByIds(ids: string[]): Promise<ColumnOtherInfo[]> {
-  let result: ColumnOtherInfo[] = [];
-
-  if (!ids || ids.length === 0) {
-    return result;
-  }
-
+// 根据ID获取单个期刊详细信息（包括文件列表）
+export async function getOneInstallment(installmentId: string): Promise<InstallmentWithFiles | null> {
   try {
-    const objects = await queryObjectsByIds(ids);
+    const objects = await queryObjectsByIds([installmentId]);
+    if (objects.length === 0 || !objects[0]?.json) {
+      return null;
+    }
 
-    let waitQueryIds: string[] = [];
-    let colOtherInfoMap = new Map<string, ColumnOtherInfo>();
+    const json = objects[0].json;
+    const installmentIdStr = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+    const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
 
-    // 第一次封装，拿到基本信息
-    for (const obj of objects) {
-      const json = obj.json;
-      if (!json) continue;
-
-      let colOtherInfo = {
-        id: json.id,
-        name: json.name,
-        desc: json.desc,
-        cover_img_url: json.cover_img_url,
-        update_method: null,
-        payment_method: null,
-        plan_installment_number: parseInt(json.plan_installment_number) || 0,
-        all_installment: [],
-        all_installment_ids: json.all_installment || [],
-        balance: json.balance?.value ? parseInt(json.balance.value) : 0,
-        is_rated: json.is_rated || false,
-        status: parseInt(json.status) || 0,
-        subscriptions: json.subscriptions
-          ? parseInt(json.subscriptions?.size || "0")
-          : 0,
-        update_at: new Date(parseInt(json.updated_at)),
-        creator: json.creator,
-      } as ColumnOtherInfo;
-
-      result.push(colOtherInfo);
-
-      // 收集需要查询的ID，确保都是字符串类型
-      if (json.update_method) {
-        const updateMethodId = String(json.update_method).trim();
-        if (updateMethodId) {
-          colOtherInfoMap.set(updateMethodId, colOtherInfo);
-          waitQueryIds.push(updateMethodId);
+    // 查询文件列表
+    const fileIds: string[] = [];
+    if (json.files && Array.isArray(json.files)) {
+      for (const fileId of json.files) {
+        const id = typeof fileId === 'string' ? fileId : (fileId as any)?.id || String(fileId)
+        if (id) {
+          fileIds.push(id);
         }
       }
-      if (json.payment_method) {
-        const paymentMethodId = String(json.payment_method).trim();
-        if (paymentMethodId) {
-          colOtherInfoMap.set(paymentMethodId, colOtherInfo);
-          waitQueryIds.push(paymentMethodId);
-        }
-      }
-      if (json.all_installment && Array.isArray(json.all_installment)) {
-        json.all_installment.forEach((i: any) => {
-          const installmentId = String(i).trim();
-          if (installmentId) {
-            colOtherInfoMap.set(installmentId, colOtherInfo);
-            waitQueryIds.push(installmentId);
-          }
+    }
+
+    const files: File[] = [];
+    if (fileIds.length > 0) {
+      const fileObjects = await queryObjectsByIds(fileIds);
+      for (const obj of fileObjects) {
+        const fileJson = obj.json;
+        if (!fileJson) continue;
+        const fileId = typeof fileJson.id === 'string' ? fileJson.id : (fileJson.id as any)?.id || String(fileJson.id)
+        files.push({
+          id: fileId,
+          title: fileJson.title || "",
+          blob_id: fileJson.blob_id || "",
+          belong_dir: fileJson.directory_id || fileJson.belong_dir || "",
+          end_epoch: fileJson.end_epoch || 0,
+          created_at: fileJson.created_at ? new Date(parseInt(fileJson.created_at)) : new Date(),
+          updated_at: fileJson.updated_at ? new Date(parseInt(fileJson.updated_at)) : new Date(),
         });
       }
     }
 
-    // 第二次封装，拿到update_method和payment_method
-    if (waitQueryIds.length > 0) {
-      const otherObjects = await queryObjectsByIds(waitQueryIds);
-
-      for (const obj of otherObjects) {
-        const type = obj.type;
-        const json = obj.json;
-        if (!json) continue;
-
-        if (type === UPDATE_TYPE || type === UPDATE_TYPE_OLD) {
-          let otherInfo = colOtherInfoMap.get(json.id);
-          if (otherInfo) {
-            otherInfo.update_method = {
-              id: json.id,
-              since: new Date(parseInt(json.since)),
-              day_number: json.day_number,
-              installment_number: json.installment_number,
-            };
-          }
-        } else if (type === PAYMENT_TYPE || type === PAYMENT_TYPE_OLD) {
-          let otherInfo = colOtherInfoMap.get(json.id);
-          if (otherInfo) {
-            otherInfo.payment_method = {
-              id: json.id,
-              pay_type: json.pay_type,
-              coin_type: json.coin_type,
-              decimals: json.decimals,
-              fee: json.fee / 1000000000, // 转换为SUI单位
-              subscription_time: json.subscription_time,
-            };
-          }
-        } else if (type === INSTALLMENT_TYPE || type === INSTALLMENT_TYPE_OLD) {
-          // 兼容新旧版本的 Installment 类型
-          let otherInfo = colOtherInfoMap.get(json.id);
-          if (otherInfo) {
-            otherInfo.all_installment.push({
-              id: json.id,
-              belong_column: json.belong_column,
-              no: json.no,
-              files: json.files || [],
-              is_published: json.is_published || false,
-              published_at: json.published_at,
-            });
-          }
-        }
-      }
-    }
-
-    return result;
+    return {
+      id: installmentIdStr,
+      belong_column: belongColumnId,
+      no: parseInt(json.no) || 0,
+      files: files,
+    };
   } catch (error) {
-    console.error("Failed to fetch columns:", error);
-    return [];
+    console.error("getOneInstallment 失败:", error);
+    return null;
   }
 }
 
@@ -673,40 +640,138 @@ export async function addInstallment({
   chain: string;
   signAndExecuteTransaction: any;
 }) {
+  // 确保所有 ID 都是字符串类型
+  const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
+  const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+  
   if (!fileIds || fileIds.length === 0) {
-    throw new Error("至少需要选择一个文件");
+    throw new Error("至少需要一个文件")
+  }
+  
+  if (fileIds.length > 7) {
+    throw new Error("一个期刊最多只能关联7个文件")
   }
 
-  if (fileIds.length > 7) {
-    throw new Error("一个期刊最多只能关联7个文件");
+  // 确保所有文件 ID 都是字符串类型
+  const validFileIds = fileIds.map((id) => {
+    if (typeof id === 'string') return id.trim()
+    if (id && typeof id === 'object' && 'id' in id) {
+      return String((id as any).id).trim()
+    }
+    return String(id).trim()
+  }).filter((id) => id.length > 0)
+
+  if (validFileIds.length === 0) {
+    throw new Error("没有有效的文件 ID")
   }
 
   const tx = new Transaction();
   
-  // 根据文件数量调用不同的合约函数
-  const functionName = fileIds.length === 1
-    ? "add_installment"
-    : `add_installment_with_${fileIds.length}_files`;
-
-  // 构建参数：column_cap, column, file1, file2, ..., clock, global_config
-  const args: any[] = [
-    tx.object(columnCapId), // column_cap: &ColumnCap
-    tx.object(columnId), // column: &mut Column
-  ];
-
-  // 添加所有文件对象
-  fileIds.forEach((fileId) => {
-    args.push(tx.object(fileId)); // file: &mut File
-  });
-
-  // 添加 clock 和 global_config
-  args.push(tx.object("0x6")); // clock: &Clock
-  args.push(tx.object(globalConfigId)); // global_config: &GlobalConfig
-
-  tx.moveCall({
-    target: `${packageId}::coral_market::${functionName}`,
-    arguments: args,
-  });
+  // 根据文件数量调用不同的 Move 函数
+  const fileCount = validFileIds.length
+  const fileObjects = validFileIds.map((id) => tx.object(id))
+  
+  if (fileCount === 1) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment`,
+      arguments: [
+        tx.object(columnCapIdStr), // column_cap: &ColumnCap
+        tx.object(columnIdStr), // column: &mut Column
+        fileObjects[0], // file1: &mut File
+        tx.object("0x6"), // clock: &Clock
+        tx.object(globalConfigId), // global_config: &GlobalConfig
+      ],
+    });
+  } else if (fileCount === 2) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_2_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else if (fileCount === 3) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_3_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        fileObjects[2],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else if (fileCount === 4) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_4_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        fileObjects[2],
+        fileObjects[3],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else if (fileCount === 5) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_5_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        fileObjects[2],
+        fileObjects[3],
+        fileObjects[4],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else if (fileCount === 6) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_6_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        fileObjects[2],
+        fileObjects[3],
+        fileObjects[4],
+        fileObjects[5],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else if (fileCount === 7) {
+    tx.moveCall({
+      target: `${packageId}::coral_market::add_installment_with_7_files`,
+      arguments: [
+        tx.object(columnCapIdStr),
+        tx.object(columnIdStr),
+        fileObjects[0],
+        fileObjects[1],
+        fileObjects[2],
+        fileObjects[3],
+        fileObjects[4],
+        fileObjects[5],
+        fileObjects[6],
+        tx.object("0x6"),
+        tx.object(globalConfigId),
+      ],
+    });
+  } else {
+    throw new Error(`不支持的文件数量: ${fileCount}`)
+  }
 
   return new Promise((resolve, reject) => {
     signAndExecuteTransaction(
@@ -723,7 +788,6 @@ export async function addInstallment({
   });
 }
 
-// 向期刊添加文件
 export async function addFileToInstallment({
   fileId,
   installmentId,
@@ -742,8 +806,52 @@ export async function addFileToInstallment({
   tx.moveCall({
     target: `${packageId}::coral_market::add_file_to_installment`,
     arguments: [
-      tx.object(fileId), // file: &mut File
+      tx.object(fileId), // file: File
       tx.object(installmentId), // installment: &mut Installment
+    ],
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
+}
+
+// 发布专栏
+export async function publishColumn({
+  columnCapId,
+  columnId,
+  packageId,
+  chain,
+  signAndExecuteTransaction,
+}: {
+  columnCapId: string;
+  columnId: string;
+  packageId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  // 确保所有 ID 都是字符串类型
+  const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
+  const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+  
+  const tx = new Transaction();
+  
+  tx.moveCall({
+    target: `${packageId}::coral_market::publish_column`,
+    arguments: [
+      tx.object(columnCapIdStr), // column_cap: &ColumnCap
+      tx.object(columnIdStr), // column: &mut Column
+      tx.object("0x6"), // clock: &Clock
     ],
   });
 
@@ -778,14 +886,19 @@ export async function publishInstallment({
   chain: string;
   signAndExecuteTransaction: any;
 }) {
+  // 确保所有 ID 都是字符串类型
+  const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
+  const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+  const installmentIdStr = typeof installmentId === 'string' ? installmentId : (installmentId as any)?.id || String(installmentId)
+  
   const tx = new Transaction();
   
   tx.moveCall({
     target: `${packageId}::coral_market::publish_installment`,
     arguments: [
-      tx.object(columnCapId), // column_cap: &ColumnCap
-      tx.object(columnId), // column: &mut Column
-      tx.object(installmentId), // installment: &mut Installment
+      tx.object(columnCapIdStr), // column_cap: &ColumnCap
+      tx.object(columnIdStr), // column: &mut Column
+      tx.object(installmentIdStr), // installment: &mut Installment
       tx.object("0x6"), // clock: &Clock
     ],
   });
@@ -805,3 +918,76 @@ export async function publishInstallment({
   });
 }
 
+// 订阅专栏
+export async function subscribeColumn({
+  columnId,
+  paymentMethodId,
+  packageId,
+  chain,
+  signAndExecuteTransaction,
+}: {
+  columnId: string;
+  paymentMethodId: string;
+  packageId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  // 确保所有 ID 都是字符串类型
+  const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+  const paymentMethodIdStr = typeof paymentMethodId === 'string' ? paymentMethodId : (paymentMethodId as any)?.id || String(paymentMethodId)
+  
+  // 先查询 PaymentMethod 获取 fee
+  const paymentMethodObjects = await queryObjectsByIds([paymentMethodIdStr])
+  if (paymentMethodObjects.length === 0) {
+    throw new Error("未找到支付方式")
+  }
+  const paymentMethod = paymentMethodObjects[0].json
+  const feeAmount = BigInt(paymentMethod.fee) // fee 已经是最小单位（10^9）
+  
+  // 查询 Market 获取 cut 值（假设 cut 是 500，即 5%）
+  // 为了简化，我们假设 cut 是 5%（500/10000）
+  // 如果需要精确值，可以查询 Market 对象
+  const MARKET_CUT = 500 // 5% = 500/10000
+  const cutFeeAmount = (feeAmount * BigInt(MARKET_CUT)) / BigInt(10000)
+  const subFeeAmount = feeAmount - cutFeeAmount
+  
+  const tx = new Transaction();
+  
+  // 拆分 SUI coin：先获取总金额，然后拆分为手续费和订阅费
+  // 用户需要支付的总金额是 feeAmount
+  // splitCoins 返回数组，第一个元素是拆分出的 coin
+  const [totalCoin] = tx.splitCoins(tx.gas, [feeAmount])
+  
+  // 从 totalCoin 中拆分出手续费
+  // splitCoins 会从源 coin 中移除指定金额，所以 totalCoin 剩余的就是 subFeeAmount
+  const [cutFeeCoin] = tx.splitCoins(totalCoin, [cutFeeAmount])
+  // totalCoin 现在剩余的就是 subFeeAmount，直接使用它作为订阅费
+  const subFeeCoin = totalCoin
+  
+  tx.moveCall({
+    target: `${packageId}::coral_market::subscription_column`,
+    arguments: [
+      tx.object(MARKET_ID), // market: &mut Market
+      tx.object(columnIdStr), // column: &mut Column
+      tx.object(paymentMethodIdStr), // payment_method: &PaymentMethod
+      subFeeCoin, // fee: Coin<SUI> (订阅费)
+      cutFeeCoin, // cut_fee: Coin<SUI> (手续费)
+      tx.object("0x6"), // clock: &Clock
+      tx.object(GLOBAL_CONFIG_ID), // global_config: &GlobalConfig
+    ],
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
+}

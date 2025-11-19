@@ -17,6 +17,11 @@ type DownloadData = {
 
 export type MoveCallConstructor = (tx: Transaction, id: string) => void;
 
+export type MoveCallConstructorWithIds = {
+  constructor: MoveCallConstructor;
+  objectIds: string[];
+};
+
 // Walrus aggregator URLs
 const aggregators = [
   "https://aggregator.walrus-testnet.walrus.space",
@@ -45,10 +50,18 @@ const aggregators = [
 export const downloadAndDecrypt = async (
   files: File[],
   sessionKey: SessionKey,
-  moveCallConstructor: MoveCallConstructor,
+  moveCallConstructor: MoveCallConstructor | MoveCallConstructorWithIds,
   setError: (error: string | null) => void,
   setFiles: (files: File[]) => void,
 ): Promise<void> => {
+  // 处理两种类型的 moveCallConstructor
+  const constructor = typeof moveCallConstructor === 'function' 
+    ? moveCallConstructor 
+    : moveCallConstructor.constructor;
+  const objectIds = typeof moveCallConstructor === 'function'
+    ? []
+    : moveCallConstructor.objectIds;
+
   const suiClient = new SuiClient({ url: RPC_URL });
 
   // Seal key server object IDs for testnet
@@ -69,6 +82,10 @@ export const downloadAndDecrypt = async (
   // First, download all files in parallel (ignore errors)
   const downloadResults = await Promise.all(
     files.map(async (file) => {
+      if (!file.blob_id) {
+        return null;
+      }
+      
       for (let aggregator of aggregators) {
         try {
           const controller = new AbortController();
@@ -89,10 +106,6 @@ export const downloadAndDecrypt = async (
 
           return downloadData;
         } catch (err) {
-          console.error(
-            `Blob ${file.blob_id} cannot be retrieved from Walrus`,
-            err
-          );
           continue;
         }
       }
@@ -105,13 +118,9 @@ export const downloadAndDecrypt = async (
     (result): result is DownloadData => result !== null && result.downloadRes !== null
   );
 
-  console.log("validDownloads ", validDownloads);
-  console.log("validDownloads count", validDownloads.length);
-
   if (validDownloads.length === 0) {
     const errorMsg =
       "Cannot retrieve files from this Walrus aggregator, try again (a randomly selected aggregator will be used). Files uploaded more than 1 epoch ago have been deleted from Walrus.";
-    console.error(errorMsg);
     setError(errorMsg);
     return;
   }
@@ -120,15 +129,56 @@ export const downloadAndDecrypt = async (
   for (let i = 0; i < validDownloads.length; i += 10) {
     const batch = validDownloads.slice(i, i + 10);
     const batchData = batch.map((data) => data.downloadRes);
-    console.log("batch", batchData);
-    const ids = batchData.map((enc) => EncryptedObject.parse(new Uint8Array(enc)).id);
-    const tx = new Transaction();
-    // 为每个 blobId 构建 moveCall
-    ids.forEach((id) => moveCallConstructor(tx, id));
-    const txBytes = await tx.build({
-      client: suiClient,
-      onlyTransactionKind: true,
+    const ids = batchData.map((enc) => {
+      const encryptedObj = EncryptedObject.parse(new Uint8Array(enc));
+      const id = encryptedObj.id;
+      const idStr = typeof id === 'string' ? id : String(id);
+      return idStr;
     });
+    const tx = new Transaction();
+    
+    // 为每个 blobId 构建 moveCall
+    try {
+      ids.forEach((id) => constructor(tx, id));
+    } catch (err) {
+      setError(`构建交易失败: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    
+    let txBytes: Uint8Array;
+    try {
+      // 如果有对象 ID 列表，验证对象是否存在
+      if (objectIds.length > 0) {
+        const objectInfos = await suiClient.multiGetObjects({
+          ids: objectIds,
+          options: {
+            showType: true,
+            showOwner: true,
+          }
+        })
+        
+        const missingObjects: string[] = []
+        objectInfos.forEach((obj, index) => {
+          const objId = objectIds[index]
+          if (obj.error || !obj.data) {
+            missingObjects.push(objId)
+          }
+        })
+        
+        if (missingObjects.length > 0) {
+          throw new Error(`以下对象不存在或无法访问: ${missingObjects.join(', ')}`)
+        }
+      }
+      
+      txBytes = await tx.build({
+        client: suiClient,
+        onlyTransactionKind: true,
+      });
+    } catch (err) {
+      setError(`构建交易字节失败: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    
     try {
       await sealClient.fetchKeys({
         ids,
@@ -137,12 +187,14 @@ export const downloadAndDecrypt = async (
         threshold: 2,
       });
     } catch (err) {
-      console.log(err);
       const errorMsg =
         err instanceof NoAccessError
-          ? "No access to decryption keys"
-          : "Unable to decrypt files, try again";
-      console.error(errorMsg, err);
+          ? "无访问权限，请检查订阅状态"
+          : err instanceof Error && err.message.includes("403")
+          ? "访问被拒绝，请检查订阅是否有效且未过期"
+          : err instanceof Error && err.message.includes("InvalidParameterError")
+          ? "交易参数无效，请检查订阅和期刊信息"
+          : "无法解密文件，请重试";
       setError(errorMsg);
       return;
     }
@@ -154,7 +206,7 @@ export const downloadAndDecrypt = async (
       new Uint8Array(encryptedData.downloadRes)
     ).id;
     const tx = new Transaction();
-    moveCallConstructor(tx, fullId);
+    constructor(tx, fullId);
     const txBytes = await tx.build({
       client: suiClient,
       onlyTransactionKind: true,
@@ -168,19 +220,16 @@ export const downloadAndDecrypt = async (
       });
       const textDecoder = new TextDecoder();
       const textContent = textDecoder.decode(decryptedFile);
-      console.log("decrypted text content:", textContent);
       // 更新文件内容
       const file = files.find((f) => f.id === encryptedData.fileId);
       if (file) {
         file.content = textContent;
       }
     } catch (err) {
-      console.log(err);
       const errorMsg =
         err instanceof NoAccessError
           ? "No access to decryption keys"
           : "Unable to decrypt files, try again";
-      console.error(errorMsg, err);
       setError(errorMsg);
       return;
     }
@@ -199,20 +248,60 @@ export function constructSubscribeMoveCall(
   paymentMethodId: string,
   fileId: string,
   installmentId: string,
-): MoveCallConstructor {
-  return (tx: Transaction, id: string) => {
-    tx.moveCall({
-      target: `${packageId}::coral_market::seal_approve_sub`,
-      arguments: [
-        tx.pure.vector("u8", fromHex(id)),
-        tx.object(subCapId),
-        tx.object(columnId),
-        tx.object(paymentMethodId),
-        tx.object(fileId), // file
-        tx.object(installmentId),
-        tx.object("0x6"), // clock
-      ],
-    });
+): MoveCallConstructorWithIds {
+  // 验证所有 ID 都是有效的字符串格式
+  const validateObjectId = (id: string, name: string) => {
+    if (!id || typeof id !== 'string' || id.length === 0) {
+      throw new Error(`Invalid ${name}: ${id}`)
+    }
+    // 确保 ID 是有效的 Sui 对象 ID 格式（0x 开头，64 个十六进制字符）
+    if (!id.startsWith('0x') || id.length < 3) {
+      throw new Error(`Invalid ${name} format: ${id}`)
+    }
+    return id
+  }
+
+
+  const validatedSubCapId = validateObjectId(subCapId, 'subCapId')
+  const validatedColumnId = validateObjectId(columnId, 'columnId')
+  const validatedPaymentMethodId = validateObjectId(paymentMethodId, 'paymentMethodId')
+  const validatedFileId = validateObjectId(fileId, 'fileId')
+  const validatedInstallmentId = validateObjectId(installmentId, 'installmentId')
+  
+  const moveCallFn = (tx: Transaction, id: string) => {
+    try {
+      // 验证 id 格式
+      if (!id || typeof id !== 'string') {
+        throw new Error(`Invalid encrypted object id: ${id}`)
+      }
+      
+      // fromHex 将十六进制字符串转换为 Uint8Array
+      const idBytes = fromHex(id);
+      
+      const moveCallArgs = [
+        tx.pure.vector("u8", idBytes),
+        tx.object(validatedSubCapId),
+        tx.object(validatedColumnId),
+        tx.object(validatedPaymentMethodId),
+        // 注意：不再传入 file 对象，因为 file 不属于订阅者
+        // Seal key server 会通过 _id (加密对象 ID) 来验证文件访问权限
+        tx.object(validatedInstallmentId),
+        tx.object.clock(), // clock - 使用系统对象方法
+      ];
+      
+      tx.moveCall({
+        target: `${packageId}::coral_market::seal_approve_sub`,
+        arguments: moveCallArgs,
+      });
+    } catch (error) {
+      throw error
+    }
+  };
+  
+  return {
+    constructor: moveCallFn,
+    // 注意：不再包含 validatedFileId，因为 file 对象不属于订阅者
+    objectIds: [validatedSubCapId, validatedColumnId, validatedPaymentMethodId, validatedInstallmentId]
   };
 }
 
@@ -223,16 +312,46 @@ export function constructCreatorMoveCall(
   columnId: string,
   fileId: string,
 ): MoveCallConstructor {
+  // 验证所有 ID 都是有效的字符串格式
+  const validateObjectId = (id: string, name: string) => {
+    if (!id || typeof id !== 'string' || id.length === 0) {
+      throw new Error(`Invalid ${name}: ${id}`)
+    }
+    // 确保 ID 是有效的 Sui 对象 ID 格式（0x 开头，64 个十六进制字符）
+    if (!id.startsWith('0x') || id.length < 3) {
+      throw new Error(`Invalid ${name} format: ${id}`)
+    }
+    return id
+  }
+
+  const validatedColCapId = validateObjectId(colCapId, 'colCapId')
+  const validatedColumnId = validateObjectId(columnId, 'columnId')
+  const validatedFileId = validateObjectId(fileId, 'fileId')
+
   return (tx: Transaction, id: string) => {
-    tx.moveCall({
-      target: `${packageId}::coral_market::seal_approve_creator`,
-      arguments: [
-        tx.pure.vector("u8", fromHex(id)),
-        tx.object(colCapId),
-        tx.object(columnId),
-        tx.object(fileId), // file
-      ],
-    });
+    try {
+      // 验证 id 格式
+      if (!id || typeof id !== 'string') {
+        throw new Error(`Invalid encrypted object id: ${id}`)
+      }
+      
+      // fromHex 将十六进制字符串转换为 Uint8Array
+      const idBytes = fromHex(id);
+      
+      const moveCallArgs = [
+        tx.pure.vector("u8", idBytes),
+        tx.object(validatedColCapId),
+        tx.object(validatedColumnId),
+        tx.object(validatedFileId), // file
+      ];
+      
+      tx.moveCall({
+        target: `${packageId}::coral_market::seal_approve_creator`,
+        arguments: moveCallArgs,
+      });
+    } catch (error) {
+      throw error
+    }
   };
 }
 

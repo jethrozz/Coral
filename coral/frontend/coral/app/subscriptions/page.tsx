@@ -13,6 +13,7 @@ import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount } from "@mysten/dapp-kit"
 import { getMySubscriptions } from "@/contract/coral_column"
 import type { Subscription } from "@/shared/data"
+import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
 
 export default function SubscriptionsPage() {
   const { toast } = useToast()
@@ -120,8 +121,10 @@ export default function SubscriptionsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {subscriptions.map((subscription) => {
                 const column = subscription.column
-                const subscriptionTime = column.payment_method?.subscription_time || 30
-                const nextPayment = getNextPaymentDate(subscription.sub_start_time, subscriptionTime)
+                // subscription_time 在合约中是毫秒数，需要转换为天数用于计算
+                const subscriptionTimeMs = column.payment_method?.subscription_time || 30 * 86400000
+                const subscriptionTimeDays = Math.round(subscriptionTimeMs / 86400000)
+                const nextPayment = getNextPaymentDate(subscription.sub_start_time, subscriptionTimeDays)
 
                 return (
                   <Card key={subscription.id} className="flex flex-col hover:border-primary transition-all duration-300">
@@ -137,38 +140,44 @@ export default function SubscriptionsPage() {
                       </div>
 
                       <Link href={`/column/${column.id}`} className="hover:text-accent transition-colors">
-                        <h3 className="text-xl font-bold text-balance">{column.name}</h3>
+                        <h3 className="text-xl font-bold text-balance">{column.name || "未知专栏"}</h3>
                       </Link>
                     </CardHeader>
 
                     <CardContent className="flex-1 space-y-4">
                       {/* Description */}
-                      <p className="text-sm text-muted-foreground line-clamp-2">{column.desc}</p>
+                      <p className="text-sm text-muted-foreground line-clamp-2">{column.desc || ""}</p>
 
                       {/* Author */}
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`h-10 w-10 rounded-full ${getAddressColor(column.creator)} flex items-center justify-center text-white text-sm font-mono font-semibold flex-shrink-0`}
-                        >
-                          {formatAddress(column.creator, 4).slice(-4)}
+                      {column.creator && (
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`h-10 w-10 rounded-full ${getAddressColor(column.creator)} flex items-center justify-center text-white text-sm font-mono font-semibold flex-shrink-0`}
+                          >
+                            {formatAddress(column.creator, 4).slice(-4)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-muted-foreground font-mono truncate">
+                              {column.creator.slice(0, 8)}...{column.creator.slice(-6)}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-muted-foreground font-mono truncate">
-                            {column.creator.slice(0, 8)}...{column.creator.slice(-6)}
-                          </p>
-                        </div>
-                      </div>
+                      )}
 
                       {/* Column Stats */}
                       <div className="p-3 rounded-lg bg-muted/50">
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <p className="text-muted-foreground">{t("subscriptions.subscribers")}</p>
-                            <p className="font-medium">{column.subscriptions}</p>
-                          </div>
+                        <div className={`grid gap-2 text-sm ${SHOW_SUBSCRIPTION_STATS ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                          {SHOW_SUBSCRIPTION_STATS && (
+                            <div>
+                              <p className="text-muted-foreground">{t("subscriptions.subscribers")}</p>
+                              <p className="font-medium">{column.subscriptions}</p>
+                            </div>
+                          )}
                           <div>
                             <p className="text-muted-foreground">{t("subscriptions.issues")}</p>
-                            <p className="font-medium">{column.all_installment.length}/{column.plan_installment_number}</p>
+                            <p className="font-medium">
+                              {column.all_installment.filter((i) => i.is_published).length}/{column.plan_installment_number}
+                            </p>
                           </div>
                         </div>
                       </div>

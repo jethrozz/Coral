@@ -2,7 +2,7 @@ import { SuiGraphQLClient } from "@mysten/sui/graphql";
 import { graphql } from "@mysten/sui/graphql/schemas/latest";
 import { Transaction } from "@mysten/sui/transactions";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
-import { DIR_TYPE, FILE_TYPE, DIR_TYPE_OLD, FILE_TYPE_OLD, GRAPHQL_URL, PACKAGE_ID, NET_WORK, RPC_URL } from "@/constants";
+import { DIR_TYPE, FILE_TYPE, GRAPHQL_URL, PACKAGE_ID, NET_WORK, RPC_URL } from "@/constants";
 import { Directory, File } from "@/shared/data";
 
 // GraphQL 查询定义
@@ -133,7 +133,7 @@ export const queryByAddressAndType = graphql(`
   }
 `);
 
-// 获取用户拥有的目录（同时查询新旧版本）
+// 获取用户拥有的目录
 export async function getUserOwnDirectory(
   address: string,
   graphqlUrl: string = GRAPHQL_URL
@@ -171,20 +171,6 @@ export async function getUserOwnDirectory(
     hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
 
-  // 查询旧版本的目录
-  endCursor = null;
-  hasNextPage = false;
-  do {
-    const currentPage: any = await suiGraphQLClient.query({
-      query: queryByAddressAndType,
-      variables: { address, type: DIR_TYPE_OLD, cursor: endCursor },
-    });
-    result.push(...parseDirData(currentPage.data));
-
-    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
-    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
-  } while (hasNextPage);
-
   // 去重（基于对象 ID）
   const uniqueResult = Array.from(
     new Map(result.map((dir) => [dir.id, dir])).values()
@@ -193,7 +179,7 @@ export async function getUserOwnDirectory(
   return uniqueResult;
 }
 
-// 获取用户拥有的文件（同时查询新旧版本）
+// 获取用户拥有的文件
 export async function getUserOwnFile(
   address: string,
   graphqlUrl: string = GRAPHQL_URL
@@ -225,21 +211,6 @@ export async function getUserOwnFile(
     const currentPage: any = await suiGraphQLClient.query({
       query: queryByAddressAndType,
       variables: { address, type: FILE_TYPE, cursor: endCursor },
-    });
-
-    result.push(...parseFileData(currentPage.data));
-
-    endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
-    hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
-  } while (hasNextPage);
-
-  // 查询旧版本的文件
-  endCursor = null;
-  hasNextPage = false;
-  do {
-    const currentPage: any = await suiGraphQLClient.query({
-      query: queryByAddressAndType,
-      variables: { address, type: FILE_TYPE_OLD, cursor: endCursor },
     });
 
     result.push(...parseFileData(currentPage.data));

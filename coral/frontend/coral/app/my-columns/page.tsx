@@ -12,7 +12,8 @@ import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit"
 import { useNetworkVariable } from "@/lib/networkConfig"
 import { useToast } from "@/hooks/use-toast"
-import { getUserOwnedColumns } from "@/contract/coral_column"
+import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
+import { getUserOwnedColumns, getAllInstallmentsByColumnId, publishColumn } from "@/contract/coral_column"
 import { getUserOwnDirectory, getUserOwnFile, deleteDirectory } from "@/contract/coral_server"
 import type { ColumnCap, Directory, File } from "@/shared/data"
 
@@ -72,6 +73,7 @@ export default function MyColumnsPage() {
   const [expandedDirs, setExpandedDirs] = useState<string[]>([])
   const [vaultToDelete, setVaultToDelete] = useState<Directory | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [publishingColumnId, setPublishingColumnId] = useState<string | null>(null)
   
   // 加载用户的专栏
   useEffect(() => {
@@ -93,7 +95,42 @@ export default function MyColumnsPage() {
     setLoading(true)
     try {
       const userColumns = await getUserOwnedColumns(currentAccount.address)
-      setColumns(userColumns)
+      console.log("loadColumns - 加载到的专栏:", userColumns)
+      
+      // 为每个专栏获取期数
+      const columnsWithInstallments = await Promise.all(
+        userColumns.map(async (col) => {
+          try {
+            const installments = await getAllInstallmentsByColumnId(
+              col.column_id,
+              currentAccount.address
+            )
+            console.log(`loadColumns - 专栏 ${col.name} (${col.column_id}) 的期数:`, installments.length)
+            
+            // 更新 other 中的期数信息
+            return {
+              ...col,
+              other: {
+                ...col.other,
+                all_installment_ids: installments.map((i) => i.id),
+                all_installment: installments,
+              }
+            }
+          } catch (error) {
+            console.error(`获取专栏 ${col.name} 的期数失败:`, error)
+            return col
+          }
+        })
+      )
+      
+      columnsWithInstallments.forEach((col) => {
+        console.log(`loadColumns - 专栏 ${col.name}:`, {
+          all_installment_ids: col.other?.all_installment_ids?.length || 0,
+          all_installment: col.other?.all_installment?.length || 0
+        })
+      })
+      
+      setColumns(columnsWithInstallments)
     } catch (error) {
       console.error("加载专栏失败:", error)
     } finally {
@@ -101,6 +138,51 @@ export default function MyColumnsPage() {
     }
   }
   
+  const handlePublishColumn = async (column: ColumnCap) => {
+    if (!currentAccount?.address || !packageId || !chain) {
+      toast({
+        title: t("common.error"),
+        description: "配置错误，请检查网络设置",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // 确保所有 ID 都是字符串类型
+    const columnCapIdStr = typeof column.id === 'string' ? column.id : (column.id as any)?.id || String(column.id)
+    const columnIdStr = typeof column.column_id === 'string' ? column.column_id : (column.column_id as any)?.id || String(column.column_id)
+
+    setPublishingColumnId(columnIdStr)
+    try {
+      await publishColumn({
+        columnCapId: columnCapIdStr,
+        columnId: columnIdStr,
+        packageId,
+        chain,
+        signAndExecuteTransaction,
+      })
+
+      toast({
+        title: t("common.success"),
+        description: t("myColumns.publishSuccess"),
+      })
+
+      // 刷新专栏列表
+      setTimeout(() => {
+        loadColumns()
+      }, 2000)
+    } catch (error: any) {
+      console.error("发布专栏失败:", error)
+      toast({
+        title: t("common.error"),
+        description: error.message || t("myColumns.publishFailed"),
+        variant: "destructive",
+      })
+    } finally {
+      setPublishingColumnId(null)
+    }
+  }
+
   const loadVaults = async () => {
     if (!currentAccount?.address) return
     
@@ -290,75 +372,11 @@ export default function MyColumnsPage() {
                 </Button>
               </div>
 
-          {/* Stats Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {t("myColumns.totalSubscribers")}
-                </CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{data.totalSubscribers.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  <span className="text-primary">+12.5%</span> {t("myColumns.fromLastMonth")}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {t("myColumns.monthlyRevenue")}
-                </CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{data.monthlyRevenue} SUI</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t("common.approx")} ${(Number.parseFloat(data.monthlyRevenue) * 2).toFixed(0)} USD
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {t("myColumns.totalRevenue")}
-                </CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{data.totalRevenue} SUI</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t("common.approx")} ${(Number.parseFloat(data.totalRevenue) * 2).toFixed(0)} USD
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {t("myColumns.totalArticles")}
-                </CardTitle>
-                <FileText className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{data.columns.reduce((sum, col) => sum + col.posts, 0)}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t("myColumns.across")} {data.columns.length} {t("myColumns.columnsUnit")}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-
           {/* 专栏内部的子标签页 */}
           <Tabs defaultValue="my-columns" className="w-full">
             <TabsList>
               <TabsTrigger value="my-columns">{t("myColumns.tabColumns")}</TabsTrigger>
               <TabsTrigger value="subscribers">{t("myColumns.tabSubscribers")}</TabsTrigger>
-              <TabsTrigger value="analytics">{t("myColumns.analytics")}</TabsTrigger>
             </TabsList>
 
             {/* Columns 子Tab */}
@@ -381,10 +399,32 @@ export default function MyColumnsPage() {
                               </Badge>
                             </div>
                             <CardDescription>
-                              {column.other?.subscriptions || 0} {t("myColumns.subscribers")} · {column.other?.all_installment?.length || 0} {t("myColumns.issues")}
+                              {SHOW_SUBSCRIPTION_STATS && (
+                                <>
+                                  {column.other?.subscriptions || 0} {t("myColumns.subscribers")} ·{" "}
+                                </>
+                              )}
+                              {/* 创作者页面：显示所有期数（包括已发布和未发布） */}
+                              {column.other?.all_installment_ids?.length || column.other?.all_installment?.length || 0} {t("myColumns.issues")}
                             </CardDescription>
                           </div>
                           <div className="flex gap-2">
+                            {column.other?.status !== 1 && (
+                              <Button
+                                variant="default"
+                                onClick={() => handlePublishColumn(column)}
+                                disabled={publishingColumnId === column.column_id}
+                              >
+                                {publishingColumnId === column.column_id ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    {t("myColumns.publishing")}
+                                  </>
+                                ) : (
+                                  t("myColumns.publish")
+                                )}
+                              </Button>
+                            )}
                             <Button variant="outline" asChild>
                               <Link href={`/columns/${column.column_id}`}>{t("myColumns.view")}</Link>
                             </Button>
@@ -394,22 +434,6 @@ export default function MyColumnsPage() {
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div className="space-y-1">
-                            <p className="text-sm text-muted-foreground">{t("myColumns.totalBalance")}</p>
-                            <p className="text-2xl font-bold">{column.other?.balance || 0} SUI</p>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-sm text-muted-foreground">{t("myColumns.subscriptionPrice")}</p>
-                            <p className="text-2xl font-bold">{column.other?.payment_method?.fee || 0} SUI</p>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-sm text-muted-foreground">{t("myColumns.subscribersCount")}</p>
-                            <p className="text-2xl font-bold">{column.other?.subscriptions || 0}</p>
-                          </div>
-                        </div>
-                      </CardContent>
                     </Card>
                   ))}
                 </div>
@@ -453,78 +477,6 @@ export default function MyColumnsPage() {
                         <div className="text-sm text-muted-foreground">{subscriber.subscribedAt}</div>
                       </div>
                     ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Analytics Tab */}
-            <TabsContent value="analytics" className="space-y-6 mt-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5" />
-                    {t("myColumns.analytics")}
-                  </CardTitle>
-                  <CardDescription>{t("myColumns.viewColumnPerformance")}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <h4 className="font-semibold">{t("myColumns.subscriberGrowth")}</h4>
-                        <div className="h-48 flex items-end justify-between gap-2">
-                          {[420, 520, 680, 820, 950, 1100, 1234].map((value, index) => (
-                            <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                              <div
-                                className="w-full bg-primary rounded-t"
-                                style={{ height: `${(value / 1234) * 100}%` }}
-                              />
-                              <span className="text-xs text-muted-foreground">
-                                {index === 6 ? t("myColumns.today") : `${7 - index} ${t("myColumns.daysAgo")}`}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <h4 className="font-semibold">{t("myColumns.revenueTrend")}</h4>
-                        <div className="h-48 flex items-end justify-between gap-2">
-                          {[21, 26, 34, 41, 47.5, 55, 61.7].map((value, index) => (
-                            <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                              <div
-                                className="w-full bg-chart-1 rounded-t"
-                                style={{ height: `${(value / 61.7) * 100}%` }}
-                              />
-                              <span className="text-xs text-muted-foreground">
-                                {index === 6 ? t("myColumns.today") : `${7 - index} ${t("myColumns.daysAgo")}`}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-border">
-                      <h4 className="font-semibold mb-4">{t("myColumns.columnPerformance")}</h4>
-                      <div className="space-y-4">
-                        {data.columns.map((column) => (
-                          <div key={column.id} className="flex items-center justify-between">
-                            <div className="space-y-1">
-                              <p className="font-medium">{column.title}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {column.subscribers} {t("myColumns.subscribers")}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-semibold">{column.monthlyRevenue} SUI</p>
-                              <p className="text-sm text-muted-foreground">{t("myColumns.monthlyRevenue")}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </CardContent>
               </Card>

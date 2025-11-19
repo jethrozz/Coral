@@ -8,13 +8,16 @@ import { Search, Loader2 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useI18n } from "@/lib/i18n/context"
+import { useCurrentAccount } from "@mysten/dapp-kit"
 import { getAllColumns } from "@/contract/coral_column"
 import { ColumnOtherInfo } from "@/shared/data"
+import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
 
 type SearchType = "all" | "title" | "creator"
 
 export default function SearchPage() {
   const { t, language } = useI18n()
+  const currentAccount = useCurrentAccount()
   const [columns, setColumns] = useState<ColumnOtherInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
@@ -38,6 +41,7 @@ export default function SearchPage() {
 
   // 将 ColumnOtherInfo 转换为 ColumnCard 所需的格式
   const convertToCardProps = (column: ColumnOtherInfo) => {
+    const isCreator = currentAccount?.address?.toLowerCase() === column.creator.toLowerCase()
     return {
       id: column.id,
       title: column.name,
@@ -50,6 +54,9 @@ export default function SearchPage() {
       subscribers: column.subscriptions,
       price: column.payment_method?.fee?.toString() || "0",
       coverImage: column.cover_img_url,
+      isCreator,
+      updateMethod: column.update_method,
+      paymentMethod: column.payment_method,
     }
   }
 
@@ -80,7 +87,7 @@ export default function SearchPage() {
   const filteredColumns = columns
     .filter(matchesSearch)
     .sort((a, b) => {
-      if (sortBy === "subscribers") {
+      if (sortBy === "subscribers" && SHOW_SUBSCRIPTION_STATS) {
         return b.subscriptions - a.subscriptions
       } else if (sortBy === "price-low") {
         const priceA = a.payment_method?.fee || 0
@@ -151,7 +158,9 @@ export default function SearchPage() {
                   <SelectValue placeholder={t("search.sortBy")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="subscribers">{t("search.sortBySubscribers")}</SelectItem>
+                  {SHOW_SUBSCRIPTION_STATS && (
+                    <SelectItem value="subscribers">{t("search.sortBySubscribers")}</SelectItem>
+                  )}
                   <SelectItem value="price-low">{t("search.priceLowToHigh")}</SelectItem>
                   <SelectItem value="price-high">
                     {t("search.priceHighToLow")}

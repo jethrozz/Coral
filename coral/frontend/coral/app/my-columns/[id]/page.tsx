@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit"
 import { useNetworkVariable } from "@/lib/networkConfig"
+import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
 import { 
   getUserOwnedColumns, 
   getUserOwnedInstallments,
@@ -290,15 +291,20 @@ export default function ColumnManagePage() {
     }
   }
 
-  const handlePublishInstallment = async (installmentId: string) => {
+  const handlePublishInstallment = async (installmentId: string | { id: string }) => {
     if (!column) return
 
-    setIsPublishing(installmentId)
+    // 确保 installmentId 是字符串
+    const installmentIdStr = typeof installmentId === 'string' ? installmentId : (installmentId as any)?.id || String(installmentId)
+    const columnCapIdStr = typeof column.id === 'string' ? column.id : (column.id as any)?.id || String(column.id)
+    const columnIdStr = typeof column.column_id === 'string' ? column.column_id : (column.column_id as any)?.id || String(column.column_id)
+
+    setIsPublishing(installmentIdStr)
     try {
       await publishInstallment({
-        columnCapId: column.id,
-        columnId: column.column_id,
-        installmentId,
+        columnCapId: columnCapIdStr,
+        columnId: columnIdStr,
+        installmentId: installmentIdStr,
         packageId,
         chain,
         signAndExecuteTransaction,
@@ -415,10 +421,14 @@ export default function ColumnManagePage() {
                   </div>
                   <CardDescription>{column.description}</CardDescription>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground pt-2">
-                    <span>
-                      {column.other?.subscriptions || 0} {t("myColumns.subscribers")}
-                    </span>
-                    <span>·</span>
+                    {SHOW_SUBSCRIPTION_STATS && (
+                      <>
+                        <span>
+                          {column.other?.subscriptions || 0} {t("myColumns.subscribers")}
+                        </span>
+                        <span>·</span>
+                      </>
+                    )}
                     <span>
                       {installments.length} {t("myColumns.issues")}
                     </span>
@@ -551,17 +561,23 @@ export default function ColumnManagePage() {
                         <Button
                           className="w-full"
                           onClick={() => handlePublishInstallment(installment.id)}
-                          disabled={isPublishing === installment.id}
+                          disabled={(() => {
+                            const installmentIdStr = typeof installment.id === 'string' ? installment.id : (installment.id as any)?.id || String(installment.id)
+                            return isPublishing === installmentIdStr
+                          })()}
                         >
-                          {isPublishing === installment.id ? (
+                          {(() => {
+                            const installmentIdStr = typeof installment.id === 'string' ? installment.id : (installment.id as any)?.id || String(installment.id)
+                            return isPublishing === installmentIdStr
+                          })() ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              {t("myColumns.publishing")}
+                              {t("myColumns.publishingInstallment")}
                             </>
                           ) : (
                             <>
                               <Eye className="mr-2 h-4 w-4" />
-                              {t("myColumns.publish")}
+                              {t("myColumns.publishInstallment")}
                             </>
                           )}
                         </Button>

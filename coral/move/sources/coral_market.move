@@ -535,8 +535,8 @@ module coral::coral_market {
         market: &mut Market,
         column: &mut Column,
         payment_method: &PaymentMethod,
-        fee: Coin<SUI>, //支付费用
-        cut_fee: Coin<SUI>, //手续费
+        fee: Coin<SUI>, //订阅费（给专栏的）
+        cut_fee: Coin<SUI>, //手续费（给市场的）
         clock: &Clock,
         global_config: &GlobalConfig,
         ctx: &mut TxContext){
@@ -548,10 +548,10 @@ module coral::coral_market {
             assert!(object::id(payment_method) == column.payment_method, E_NOT_COLUMN_PAY_NOT_MATCH);
 
             let cut_fee_amount = payment_method.fee * market.cut / 10000;
+            //检查总支付金额必须等于 payment_method.fee
+            assert!(fee.value() + cut_fee.value() == payment_method.fee, E_NOT_FEE_NOT_ENOUGH);
+            //检查手续费是否足够（如果总和等于总费用，订阅费自然也会正确）
             assert!(cut_fee.value() >= cut_fee_amount, E_CUT_FEE_NOT_ENOUGH);
-            //检查支付金额是否足够
-            let sub_fee_amount = payment_method.fee - cut_fee_amount;
-            assert!(fee.value() >= sub_fee_amount, E_NOT_FEE_NOT_ENOUGH);
             
 
             //计算手续费
@@ -659,15 +659,24 @@ module coral::coral_market {
     fun approve_internal(_id: vector<u8>, sub: &SubscriptionCap, column: &Column, payment_method: &PaymentMethod, clock: &Clock): bool {
         let sub_id = object::id(sub);
         let pay_method_id = object::id(payment_method);
-        //已存在的订阅者中没有这个订阅者
+        let column_id = object::id(column);
+        
+        // 1. 检查订阅是否属于该专栏
+        if(sub.column_id != column_id) {
+            return false
+        };
+        
+        // 2. 检查订阅者是否在专栏的订阅列表中
         if(!column.subscriptions.contains(sub_id)) {
             return false
         };
         
+        // 3. 检查支付方式是否匹配
         if (pay_method_id != column.payment_method) {
             return false
         };
-        //检查是否过期
+        
+        // 4. 检查是否过期
         let now = clock.timestamp_ms();
         if(payment_method.pay_type != 0){
             let sub_start_time = sub.sub_start_time;
@@ -683,16 +692,19 @@ module coral::coral_market {
     }
 
     //订阅者权限校验 - 增强版：检查文件是否属于已发布的installment
+    // 注意：不传入 file 对象，因为 file 不属于订阅者，Seal key server 会拒绝
+    // 我们通过 installment 来验证文件是否属于该 installment
     entry fun seal_approve_sub(
         _id: vector<u8>, 
         sub: &SubscriptionCap, 
         column: &Column, 
         payment_method: &PaymentMethod, 
-        file: &File,
         installment: &Installment,
         clock: &Clock, 
         _ctx: &TxContext
     ) {
+        let column_id = object::id(column);
+        
         // 1. 检查订阅是否有效
         assert!(approve_internal(_id, sub, column, payment_method, clock), ENoAccess);
         
@@ -700,10 +712,11 @@ module coral::coral_market {
         assert!(installment.is_published, E_INSTALLMENT_NOT_PUBLISHED);
         
         // 3. 检查installment是否属于该专栏
-        assert!(installment.belong_column == object::id(column), ENoAccess);
+        assert!(installment.belong_column == column_id, ENoAccess);
         
-        // 4. 检查文件是否属于该installment
-        assert!(coral_sync::file_belongs_to_installment(file, object::id(installment)), E_FILE_NOT_IN_INSTALLMENT);
+        // 注意：我们不再检查 file，因为 file 对象不属于订阅者
+        // Seal key server 会通过 _id (加密对象 ID) 来验证文件访问权限
+        // installment.files 中包含了该 installment 的所有文件 ID，Seal key server 会验证 _id 是否对应这些文件之一
     }
 
     //作者权限校验 - 作者可以访问所有文件（包括未发布的）

@@ -1,19 +1,38 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Header } from "@/components/header"
 import { ColumnCard } from "@/components/column-card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useI18n } from "@/lib/i18n/context"
+import { useCurrentAccount } from "@mysten/dapp-kit"
 import { getAllColumns } from "@/contract/coral_column"
 import { ColumnOtherInfo } from "@/shared/data"
+import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
 
 export default function HomePage() {
   const { t, language } = useI18n()
+  const currentAccount = useCurrentAccount()
   const [columns, setColumns] = useState<ColumnOtherInfo[]>([])
   const [loading, setLoading] = useState(true)
-
+  const [mounted, setMounted] = useState(false)
+  
+  // 使用 useMemo 确保语言切换时更新
+  const allCategory = useMemo(() => t("home.categories.all"), [t, language])
+  const [activeCategory, setActiveCategory] = useState(allCategory)
+  
+  // 确保只在客户端挂载后渲染，避免 hydration 不匹配
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+  
+  // 当语言切换时，更新 activeCategory
+  useEffect(() => {
+    setActiveCategory(allCategory)
+  }, [allCategory])
+  
+  console.log("activeCategory", activeCategory, "language", language)
   useEffect(() => {
     async function fetchColumns() {
       try {
@@ -31,6 +50,7 @@ export default function HomePage() {
 
   // 将 ColumnOtherInfo 转换为 ColumnCard 所需的格式
   const convertToCardProps = (column: ColumnOtherInfo) => {
+    const isCreator = currentAccount?.address?.toLowerCase() === column.creator.toLowerCase()
     return {
       id: column.id,
       title: column.name,
@@ -43,10 +63,14 @@ export default function HomePage() {
       subscribers: column.subscriptions,
       price: column.payment_method?.fee?.toString() || "0",
       coverImage: column.cover_img_url,
+      isCreator,
+      updateMethod: column.update_method,
+      paymentMethod: column.payment_method,
     }
   }
 
-  const categories = [t("home.all")]
+  // 使用 useMemo 确保语言切换时更新 categories
+  const categories = useMemo(() => [allCategory], [allCategory])
 
   return (
     <div className="min-h-screen bg-background">
@@ -83,21 +107,22 @@ export default function HomePage() {
               <h2 className="text-3xl font-bold">{t("home.popularColumns")}</h2>
             </div>
 
-            <Tabs defaultValue={categories[0]} className="w-full">
-              <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
-                {categories.map((category) => (
-                  <TabsTrigger
-                    key={category}
-                    value={category}
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                  >
-                    {category}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
+            {mounted ? (
+              <Tabs value={activeCategory} onValueChange={setActiveCategory} className="w-full">
+                <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
+                  {categories.map((category) => (
+                    <TabsTrigger
+                      key={category}
+                      value={category}
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
+                    >
+                      {category}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
 
-              {categories.map((category) => (
-                <TabsContent key={category} value={category} className="mt-8">
+                {categories.map((category) => (
+                  <TabsContent key={category} value={category} className="mt-8">
                   {loading ? (
                     <div className="text-center py-12">
                       <p className="text-muted-foreground">
@@ -117,9 +142,33 @@ export default function HomePage() {
                       ))}
                     </div>
                   )}
-                </TabsContent>
-              ))}
-            </Tabs>
+                  </TabsContent>
+                ))}
+              </Tabs>
+            ) : (
+              // 服务器端渲染时的占位符，避免 hydration 不匹配
+              <div className="mt-8">
+                {loading ? (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">
+                      {t("common.loading")}
+                    </p>
+                  </div>
+                ) : columns.length === 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">
+                      {t("home.noColumnsAvailable")}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {columns.map((column) => (
+                      <ColumnCard key={column.id} {...convertToCardProps(column)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </section>

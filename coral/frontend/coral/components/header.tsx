@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { WalletButton } from "@/components/wallet-button"
 import { LanguageSwitcher } from "@/components/language-switcher"
@@ -10,6 +11,11 @@ import { Waves } from "lucide-react"
 export function Header() {
   const pathname = usePathname()
   const { t } = useI18n()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -62,8 +68,12 @@ export function Header() {
           </div>
 
           <div className="flex items-center gap-2">
-            <LanguageSwitcher />
-            <WalletButton />
+            {mounted && (
+              <>
+                <LanguageSwitcher />
+                <WalletButton />
+              </>
+            )}
           </div>
         </div>
       </div>

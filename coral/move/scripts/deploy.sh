@@ -66,9 +66,9 @@ print_info "部署地址: $DEPLOYER"
 BALANCE=$(sui client gas --json | jq -r '.[] | .mistBalance' | awk '{s+=$1} END {print s}')
 print_info "当前余额: $BALANCE MIST ($(echo "scale=4; $BALANCE/1000000000" | bc) SUI)"
 
-MIN_BALANCE=100000000  # 0.1 SUI
+MIN_BALANCE=80000000  # 0.08 SUI (降低最低余额要求)
 if [ "$BALANCE" -lt "$MIN_BALANCE" ]; then
-    print_error "余额不足，至少需要 0.1 SUI"
+    print_error "余额不足，至少需要 0.08 SUI"
     print_info "请访问水龙头获取测试币: https://discord.com/channels/916379725201563759/971488439931392130"
     exit 1
 fi
@@ -94,7 +94,14 @@ print_success "合约构建成功"
 
 # 确认部署
 print_warning "准备部署到 $NETWORK"
-print_info "Gas 预算: 500000000 MIST (0.5 SUI)"
+# 根据余额动态调整 gas budget
+if [ "$BALANCE" -lt 200000000 ]; then
+    GAS_BUDGET=80000000  # 0.08 SUI
+    print_warning "余额较低，使用较小的 Gas 预算: $GAS_BUDGET MIST (0.08 SUI)"
+else
+    GAS_BUDGET=500000000  # 0.5 SUI
+    print_info "Gas 预算: $GAS_BUDGET MIST (0.5 SUI)"
+fi
 read -p "确认部署? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -104,7 +111,7 @@ fi
 
 # 部署合约
 print_info "正在部署合约..."
-DEPLOY_OUTPUT=$(sui client publish --gas-budget 500000000 --json 2>&1)
+DEPLOY_OUTPUT=$(sui client publish --gas-budget $GAS_BUDGET --json 2>&1)
 
 # 保存部署输出
 echo "$DEPLOY_OUTPUT" > deploy_output.json

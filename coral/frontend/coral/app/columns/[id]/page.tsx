@@ -11,7 +11,7 @@ import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount, useSignPersonalMessage } from "@mysten/dapp-kit"
 import { useNetworkVariable } from "@/lib/networkConfig"
 import { SuiClient } from "@mysten/sui/client"
-import { RPC_URL } from "@/constants"
+import { RPC_URL, PACKAGE_ID, SHOW_SUBSCRIPTION_STATS } from "@/constants"
 import { 
   getColumnById,
   getUserOwnedInstallments,
@@ -33,10 +33,13 @@ import {
   downloadAndDecrypt, 
   constructCreatorMoveCall,
   constructSubscribeMoveCall,
-  MoveCallConstructor
+  MoveCallConstructor,
+  MoveCallConstructorWithIds
 } from "@/lib/sealUtil"
 import { SessionKey } from "@mysten/seal"
 import { getMySubscriptions } from "@/contract/coral_column"
+import ReactMarkdown from "react-markdown"
+import { log } from "console"
 
 const TTL_MIN = 10
 
@@ -274,9 +277,10 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
       // 创建新的 session key
       setCurrentSessionKey(null)
       const suiClient = new SuiClient({ url: RPC_URL })
+      const effectivePackageId = PACKAGE_ID;
       const sessionKey = await SessionKey.create({
         address: currentAccount.address,
-        packageId,
+        packageId: effectivePackageId,
         ttlMin: TTL_MIN,
         suiClient,
       })
@@ -293,14 +297,12 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
             await decryptFile(file, sessionKey)
           },
           onError: (error: any) => {
-            console.error("签名失败:", error)
             setError("签名失败，请重试")
             setIsDecrypting(false)
           },
         }
       )
     } catch (error: any) {
-      console.error("解密失败:", error)
       setError(error.message || "解密失败，请重试")
       setIsDecrypting(false)
     }
@@ -310,43 +312,94 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
     if (!selectedInstallment || !column) return
 
     try {
+      const effectivePackageId = PACKAGE_ID;
+      
       // 确保所有 ID 都是字符串
       const fileId = typeof file.id === 'string' ? file.id : (file.id as any)?.id || String(file.id)
       const installmentId = typeof selectedInstallment.id === 'string' ? selectedInstallment.id : (selectedInstallment.id as any)?.id || String(selectedInstallment.id)
       const columnIdForMoveCall = typeof column.id === 'string' ? column.id : (column.id as any)?.id || columnId
       
-      console.log("decryptFile - 使用的 ID:", {
-        packageId,
-        fileId,
-        installmentId,
-        columnIdForMoveCall,
-        columnCapId: columnCap?.id,
-        subscriptionId: subscription?.id,
-        paymentMethodId: column.payment_method?.id
-      })
+      // 确保订阅相关的 ID 都是字符串
+      const subscriptionId = subscription?.id ? (typeof subscription.id === 'string' ? subscription.id : (subscription.id as any)?.id || String(subscription.id)) : ''
+      const paymentMethodId = column.payment_method?.id ? (typeof column.payment_method.id === 'string' ? column.payment_method.id : (column.payment_method.id as any)?.id || String(column.payment_method.id)) : ''
+      const columnCapId = columnCap?.id ? (typeof columnCap.id === 'string' ? columnCap.id : (columnCap.id as any)?.id || String(columnCap.id)) : ''
 
-      let moveCallConstructor: MoveCallConstructor
+      // 验证所有必需的 ID 都存在且为有效字符串
+      if (!fileId || !installmentId || !columnIdForMoveCall) {
+        throw new Error("缺少必需的文件或期刊信息")
+      }
 
-      if (isCreator && columnCap) {
+      let moveCallConstructor: MoveCallConstructor | MoveCallConstructorWithIds
+
+      if (isCreator && columnCap && columnCapId) {
         // 创作者
+        if (!columnCapId || columnCapId.length < 3) {
+          throw new Error(`无效的 ColumnCap ID: ${columnCapId}`)
+        }
+        if (!fileId || fileId.length < 3) {
+          throw new Error(`无效的文件 ID: ${fileId}`)
+        }
+        
         moveCallConstructor = constructCreatorMoveCall(
-          packageId,
-          columnCap.id,
+          effectivePackageId,
+          columnCapId,
           columnIdForMoveCall,
           fileId
         )
-      } else if (subscription && column.payment_method) {
+      } else if (subscription && column.payment_method && subscriptionId && paymentMethodId) {
         // 订阅者
+        // 从 installments 列表中查找对应的 installment 以获取 is_published 状态
+        const installmentInfo = installments.find((inst) => {
+          const instId = typeof inst.id === 'string' ? inst.id : (inst.id as any)?.id || String(inst.id)
+          return instId === installmentId
+        })
+
+        if (!subscriptionId || !paymentMethodId) {
+          throw new Error("缺少订阅或支付方式信息")
+        }
+
+        // 验证 installment 是否已发布（订阅者只能访问已发布的）
+        if (!installmentInfo?.is_published) {
+          throw new Error("该期刊尚未发布，无法访问")
+        }
+
+        // 验证 installment 是否属于该专栏
+        const installmentColumnId = typeof selectedInstallment.belong_column === 'string' 
+          ? selectedInstallment.belong_column 
+          : (selectedInstallment.belong_column as any)?.id || String(selectedInstallment.belong_column)
+        if (installmentColumnId !== columnIdForMoveCall) {
+          throw new Error("期刊不属于该专栏")
+        }
+        
+        // 验证所有必需的 ID 都存在
+        if (!subscriptionId || subscriptionId.length < 3) {
+          throw new Error(`无效的订阅 ID: ${subscriptionId}`)
+        }
+        if (!paymentMethodId || paymentMethodId.length < 3) {
+          throw new Error(`无效的支付方式 ID: ${paymentMethodId}`)
+        }
+        if (!fileId || fileId.length < 3) {
+          throw new Error(`无效的文件 ID: ${fileId}`)
+        }
+        if (!installmentId || installmentId.length < 3) {
+          throw new Error(`无效的期刊 ID: ${installmentId}`)
+        }
+        
         moveCallConstructor = constructSubscribeMoveCall(
-          packageId,
-          subscription.id,
+          effectivePackageId,
+          subscriptionId,
           columnIdForMoveCall,
-          column.payment_method.id,
+          paymentMethodId,
           fileId,
           installmentId
         )
       } else {
         throw new Error("无访问权限")
+      }
+
+      // 确保 file 有 blob_id
+      if (!file.blob_id) {
+        throw new Error(`文件 ${fileId} 缺少 blob_id，无法下载`)
       }
 
       // 创建临时文件数组用于解密
@@ -364,21 +417,35 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
             const fId = typeof f.id === 'string' ? f.id : (f.id as any)?.id || String(f.id)
             return fId === fileId
           })
-          if (decryptedFile && decryptedFile.content) {
+          // 即使内容为空字符串，也要标记为已解密（显示空白而不是加密提示）
+          if (decryptedFile && decryptedFile.content !== undefined) {
             const newDecrypted = new Map<string, string>()
-            newDecrypted.set(fileId, decryptedFile.content)
+            newDecrypted.set(fileId, decryptedFile.content || '')
             setDecryptedFiles(newDecrypted)
-            setSelectedFile({ ...file, content: decryptedFile.content })
+            setSelectedFile({ ...file, content: decryptedFile.content || '' })
           }
         }
       )
 
       setIsDecrypting(false)
     } catch (error: any) {
-      console.error("解密文件失败:", error)
       setError(error.message || "解密失败")
       setIsDecrypting(false)
     }
+  }
+
+  // 检查 packageId 是否已准备好
+  if (!packageId) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
+          <Card className="p-12 text-center">
+            <p className="text-destructive">Package ID 未配置，请检查网络配置</p>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   if (loading) {
@@ -421,7 +488,9 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
             <p className="text-sm text-muted-foreground line-clamp-2">{column.desc}</p>
             <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
               <span>{installments.length} {t("myColumns.issues")}</span>
-              <span>{column.subscriptions} {t("myColumns.subscribers")}</span>
+              {SHOW_SUBSCRIPTION_STATS && (
+                <span>{column.subscriptions} {t("myColumns.subscribers")}</span>
+              )}
             </div>
           </div>
 
@@ -568,13 +637,13 @@ export default function ColumnDetailPage({ params }: { params: Promise<{ id: str
                   const selectedFileId = typeof selectedFile.id === 'string' ? selectedFile.id : (selectedFile.id as any)?.id || String(selectedFile.id)
                   return decryptedFiles.has(selectedFileId)
                 })() ? (
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <pre className="whitespace-pre-wrap font-sans text-sm">
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:text-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-foreground prose-pre:bg-muted prose-pre:text-foreground">
+                    <ReactMarkdown>
                       {(() => {
                         const selectedFileId = typeof selectedFile.id === 'string' ? selectedFile.id : (selectedFile.id as any)?.id || String(selectedFile.id)
-                        return decryptedFiles.get(selectedFileId)
+                        return decryptedFiles.get(selectedFileId) || ""
                       })()}
-                    </pre>
+                    </ReactMarkdown>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center">

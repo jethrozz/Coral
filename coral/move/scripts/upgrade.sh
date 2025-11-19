@@ -43,11 +43,6 @@ print_info "UpgradeCap ID: $UPGRADE_CAP_ID"
 
 # 检查配置文件
 CONFIG_FILE="../deployed_addresses_${NETWORK}.json"
-if [ ! -f "$CONFIG_FILE" ]; then
-    print_error "找不到配置文件: $CONFIG_FILE"
-    print_info "请先运行部署脚本: ./scripts/deploy.sh $NETWORK"
-    exit 1
-fi
 
 # 读取旧的 Package ID
 OLD_PACKAGE_ID=$(jq -r '.packageId' "$CONFIG_FILE")
@@ -73,17 +68,27 @@ UPGRADE_OUTPUT=$(sui client upgrade \
 
 echo "$UPGRADE_OUTPUT" > upgrade_output.json
 
+# 从输出中提取 JSON 部分（从第一个 { 开始）
+UPGRADE_JSON=$(echo "$UPGRADE_OUTPUT" | awk '/^{/,0')
+
+# 如果提取失败，尝试从文件读取
+if ! echo "$UPGRADE_JSON" | jq empty > /dev/null 2>&1; then
+    if [ -f "upgrade_output.json" ]; then
+        UPGRADE_JSON=$(awk '/^{/,0' upgrade_output.json)
+    fi
+fi
+
 # 检查升级是否成功
-if echo "$UPGRADE_OUTPUT" | jq -e '.effects.status.status == "success"' > /dev/null 2>&1; then
+if echo "$UPGRADE_JSON" | jq -e '.effects.status.status == "success"' > /dev/null 2>&1; then
     print_success "合约升级成功！"
 else
     print_error "合约升级失败"
-    echo "$UPGRADE_OUTPUT" | jq '.'
+    echo "$UPGRADE_JSON" | jq '.' 2>/dev/null || echo "$UPGRADE_OUTPUT"
     exit 1
 fi
 
 # 提取新的 Package ID
-NEW_PACKAGE_ID=$(echo "$UPGRADE_OUTPUT" | jq -r '.objectChanges[] | select(.type == "published") | .packageId')
+NEW_PACKAGE_ID=$(echo "$UPGRADE_JSON" | jq -r '.objectChanges[] | select(.type == "published") | .packageId')
 
 print_success "==================== 升级信息 ===================="
 echo -e "${GREEN}旧 Package ID:${NC} $OLD_PACKAGE_ID"

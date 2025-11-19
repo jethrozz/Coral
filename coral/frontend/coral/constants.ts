@@ -1,14 +1,9 @@
 // Coral 合约配置常量
-export const PACKAGE_ID = "0x08e83229240788711c736a691f7a3d45d8d3c4a22ce6dc32943b9217ade263fe";
-export const PREVIOUS_PACKAGE_ID = "0x7558d0a1edea062bd92561b07035f332fa0ef4b757af8d43374bd814ccc31e76";
+export const PACKAGE_ID = "0x9598e4dde06d097a3dcfbda181ecaa3d8b8ff91699c2d43af6d9e7d8a441dac6";
 
-// 合约对象类型（新版本）
+// 合约对象类型
 export const DIR_TYPE = PACKAGE_ID + "::coral_sync::Directory";
 export const FILE_TYPE = PACKAGE_ID + "::coral_sync::File";
-
-// 合约对象类型（旧版本，用于查询历史数据）
-export const DIR_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_sync::Directory";
-export const FILE_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_sync::File";
 export const COLUMN_CAP_TYPE = PACKAGE_ID + "::coral_market::ColumnCap";
 export const COLUMN_TYPE = PACKAGE_ID + "::coral_market::Column";
 export const INSTALLMENT_TYPE = PACKAGE_ID + "::coral_market::Installment";
@@ -16,22 +11,14 @@ export const UPDATE_TYPE = PACKAGE_ID + "::coral_market::UpdateMethod";
 export const PAYMENT_TYPE = PACKAGE_ID + "::coral_market::PaymentMethod";
 export const SUBSCRIPTION_TYPE = PACKAGE_ID + "::coral_market::SubscriptionCap";
 
-// 旧版本类型（用于查询历史数据）
-export const COLUMN_CAP_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::ColumnCap";
-export const COLUMN_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::Column";
-export const INSTALLMENT_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::Installment";
-export const UPDATE_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::UpdateMethod";
-export const PAYMENT_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::PaymentMethod";
-export const SUBSCRIPTION_TYPE_OLD = PREVIOUS_PACKAGE_ID + "::coral_market::SubscriptionCap";
-
 // 合约对象ID
-export const CORAL_ADMIN_CAP = "0xff716b74e4cca5a74cbce527cb8b1010fd34e4a0d2ab443fa07b95dccdaecdfa";
-export const VERSION_ADMIN_CAP = "0x905219c4f4ebfe1391e18ee88860e081d6b56667e33b8fb060c0e5247d91c8b0";
-export const GLOBAL_CONFIG_ID = "0xe651015dd1c87f2e8bf170cc8ea260097914c54c89b11937d3e2a2f166af2e3c";
-export const MARKET_ID = "0x531504723648760f210d39ccc8dd7a2b9d5798a81f744663af76e77d84f5a917";
-export const MARKET_CONFIG_ID = "0xb30990c2aa2161186f92155bac101cd5e7519f81509d5e4cc2422b09611ee515";
-export const DISPLAY_ID = "0xe99ab7933130a4b59e09c908e1065b33132a117b41560e7f0e9e6e5d952d0069";
-export const PUBLISHER_ID = "0x90ffede2c84da33a21047c51b2ab1f5a7d408bc67c63a6dd10ce014658f75ca7";
+export const CORAL_ADMIN_CAP = "0xecfd05759ac3b652661ca5daee03be8f50ebb862b243ff89ba00359d53ee9cd1";
+export const VERSION_ADMIN_CAP = "0xd97ad295bc60f14595a74eeff9ee47f3297a6637d5fde141b3fab4dc43a0ed23";
+export const GLOBAL_CONFIG_ID = "0xa9b8ccf530e1086c4b2a593a9a04480f75363de9a5bb7bb7d51b105238ebc546";
+export const MARKET_ID = "0x0003915c2c586d08044543994f48054be0c7d751860aca1e0e38341cb253edfe";
+export const MARKET_CONFIG_ID = "0x056f95af79a2bc16ae92d39cffa57de953e7eeb0bcb21a1ba9dc6997bbc68cd3";
+export const DISPLAY_ID = "0x02e2b7369a3fb20c4582c76afa1319edd80e51386bb8f78e88126615113af3d5";
+export const PUBLISHER_ID = "0x96dcbf4999767aa279bb1a207ad91004944db3ed4c34e8b7ebce99025951db9e";
 
 // 网络配置
 // Sui testnet GraphQL 端点
@@ -41,4 +28,9 @@ export const GRAPHQL_URL = "https://graphql.testnet.sui.io/graphql";
 export const RPC_URL = "https://fullnode.testnet.sui.io:443";
 // 备用端点 - 可以尝试使用其他 RPC 提供商
 export const NET_WORK = "testnet";
+
+// UI 功能配置
+// 是否显示订阅统计数据（订阅者数量等）
+// 设置为 false 可以在打包时移除订阅统计相关的 UI
+export const SHOW_SUBSCRIPTION_STATS = false;
 
