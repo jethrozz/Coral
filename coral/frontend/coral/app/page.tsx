@@ -37,10 +37,20 @@ export default function HomePage() {
     async function fetchColumns() {
       try {
         setLoading(true)
+        console.log("首页 - 开始获取所有专栏")
         const data = await getAllColumns()
-        setColumns(data)
+        console.log("首页 - 获取到的专栏数量（过滤前）:", data.length)
+        console.log("首页 - 专栏列表（过滤前）:", data.map(col => ({ id: col.id, name: col.name, status: col.status })))
+        
+        // 只显示已发布的专栏（status === 1）
+        const publishedColumns = data.filter(col => col.status === 1)
+        console.log("首页 - 已发布的专栏数量:", publishedColumns.length)
+        console.log("首页 - 已发布的专栏列表:", publishedColumns.map(col => ({ id: col.id, name: col.name, status: col.status })))
+        
+        setColumns(publishedColumns)
       } catch (error) {
-        console.error("Failed to fetch columns:", error)
+        console.error("首页 - 获取专栏失败:", error)
+        setColumns([])
       } finally {
         setLoading(false)
       }

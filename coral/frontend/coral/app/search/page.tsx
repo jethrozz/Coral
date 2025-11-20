@@ -9,11 +9,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useI18n } from "@/lib/i18n/context"
 import { useCurrentAccount } from "@mysten/dapp-kit"
-import { getAllColumns } from "@/contract/coral_column"
+import { getAllColumns, getUserOwnedColumns, getColumnsByIds } from "@/contract/coral_column"
 import { ColumnOtherInfo } from "@/shared/data"
 import { SHOW_SUBSCRIPTION_STATS } from "@/constants"
 
-type SearchType = "all" | "title" | "creator"
+type SearchType = "title" | "creator"
 
 export default function SearchPage() {
   const { t, language } = useI18n()
@@ -21,23 +21,76 @@ export default function SearchPage() {
   const [columns, setColumns] = useState<ColumnOtherInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  const [searchType, setSearchType] = useState<SearchType>("all")
-  const [sortBy, setSortBy] = useState("subscribers")
+  const [searchType, setSearchType] = useState<SearchType>("title")
+  const [sortBy, setSortBy] = useState("price-low")
 
+  // 根据搜索类型加载数据
   useEffect(() => {
     async function fetchColumns() {
       try {
         setLoading(true)
-        const data = await getAllColumns()
-        setColumns(data)
+        
+        if (searchType === "title") {
+          // 标题搜索：获取所有专栏
+          console.log("搜索页 - 标题搜索：开始获取所有专栏")
+          const data = await getAllColumns()
+          console.log("搜索页 - 标题搜索：获取到的专栏数量（过滤前）:", data.length)
+          console.log("搜索页 - 标题搜索：专栏列表（过滤前）:", data.map(col => ({ id: col.id, name: col.name, status: col.status })))
+          
+          // 只显示已发布的专栏（status === 1）
+          const publishedColumns = data.filter(col => col.status === 1)
+          console.log("搜索页 - 标题搜索：已发布的专栏数量:", publishedColumns.length)
+          setColumns(publishedColumns)
+        } else if (searchType === "creator") {
+          // 作者搜索：根据输入的地址获取该用户拥有的专栏
+          if (!searchQuery.trim()) {
+            // 如果没有输入查询，显示所有已发布的专栏（使用标题搜索的逻辑）
+            console.log("搜索页 - 作者搜索（无输入）：开始获取所有专栏")
+            const data = await getAllColumns()
+            console.log("搜索页 - 作者搜索（无输入）：获取到的专栏数量（过滤前）:", data.length)
+            
+            // 只显示已发布的专栏（status === 1）
+            const publishedColumns = data.filter(col => col.status === 1)
+            console.log("搜索页 - 作者搜索（无输入）：已发布的专栏数量:", publishedColumns.length)
+            setColumns(publishedColumns)
+            return
+          }
+          
+          const creatorAddress = searchQuery.trim()
+          console.log("搜索页 - 作者搜索：查询地址:", creatorAddress)
+          
+          // 获取指定地址拥有的 ColumnCap
+          const userColumnCaps = await getUserOwnedColumns(creatorAddress)
+          console.log("搜索页 - 作者搜索：获取到的 ColumnCap 数量:", userColumnCaps.length)
+          
+          // 提取所有 Column ID
+          const columnIds = userColumnCaps.map((cap) => cap.column_id)
+          console.log("搜索页 - 作者搜索：Column IDs:", columnIds)
+          
+          if (columnIds.length === 0) {
+            console.log("搜索页 - 作者搜索：没有找到专栏")
+            setColumns([])
+            return
+          }
+          
+          // 批量查询专栏详细信息
+          const columnDetails = await getColumnsByIds(columnIds)
+          console.log("搜索页 - 作者搜索：获取到的专栏详细信息数量（过滤前）:", columnDetails.length)
+          
+          // 只显示已发布的专栏（status === 1）
+          const publishedColumns = columnDetails.filter(col => col.status === 1)
+          console.log("搜索页 - 作者搜索：已发布的专栏数量:", publishedColumns.length)
+          setColumns(publishedColumns)
+        }
       } catch (error) {
         console.error("Failed to fetch columns:", error)
+        setColumns([])
       } finally {
         setLoading(false)
       }
     }
     fetchColumns()
-  }, [])
+  }, [searchType, searchQuery])
 
   // 将 ColumnOtherInfo 转换为 ColumnCard 所需的格式
   const convertToCardProps = (column: ColumnOtherInfo) => {
@@ -62,7 +115,10 @@ export default function SearchPage() {
 
   // 搜索匹配逻辑
   const matchesSearch = (column: ColumnOtherInfo) => {
-    if (!searchQuery.trim()) return true
+    if (!searchQuery.trim()) {
+      // 没有查询时显示所有专栏
+      return true
+    }
 
     const query = searchQuery.toLowerCase().trim()
     const name = column.name.toLowerCase()
@@ -74,12 +130,10 @@ export default function SearchPage() {
         // 仅搜索标题和描述
         return name.includes(query) || desc.includes(query)
       case "creator":
-        // 仅搜索创作者地址
-        return creator.includes(query)
-      case "all":
+        // 作者搜索：已经在 useEffect 中根据地址过滤了，这里只需要精确匹配
+        return creator === query
       default:
-        // 搜索所有字段
-        return name.includes(query) || desc.includes(query) || creator.includes(query)
+        return true
     }
   }
 
@@ -108,9 +162,8 @@ export default function SearchPage() {
         return t("search.searchByTitle")
       case "creator":
         return t("search.searchByCreator")
-      case "all":
       default:
-        return t("search.searchAll")
+        return t("search.searchByTitle")
     }
   }
 
@@ -132,9 +185,6 @@ export default function SearchPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">
-                      {t("search.all")}
-                    </SelectItem>
                     <SelectItem value="title">
                       {t("search.searchTypeTitle")}
                     </SelectItem>

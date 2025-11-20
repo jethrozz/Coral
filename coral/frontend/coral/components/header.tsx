@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { WalletButton } from "@/components/wallet-button"
 import { LanguageSwitcher } from "@/components/language-switcher"
 import { usePathname } from "next/navigation"
 import { useI18n } from "@/lib/i18n/context"
-import { Waves } from "lucide-react"
 
 export function Header() {
   const pathname = usePathname()
@@ -23,9 +23,13 @@ export function Header() {
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent text-primary-foreground">
-                <Waves className="h-5 w-5" />
-              </div>
+              <Image
+                src="/logo—coral.png"
+                alt="Coral Logo"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
+              />
               <span className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                 {t("header.title")}
               </span>

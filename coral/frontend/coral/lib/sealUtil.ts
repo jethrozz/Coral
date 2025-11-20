@@ -8,7 +8,7 @@ import {
   SessionKey,
 } from "@mysten/seal";
 import { fromHex } from "@mysten/sui/utils";
-import { RPC_URL, NET_WORK } from "@/constants";
+import { RPC_URL, NET_WORK, SEAL_SERVER_OBJECT_IDS } from "@/constants";
 
 type DownloadData = {
   fileId: string;
@@ -64,15 +64,9 @@ export const downloadAndDecrypt = async (
 
   const suiClient = new SuiClient({ url: RPC_URL });
 
-  // Seal key server object IDs for testnet
-  const serverObjectIds = [
-    "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
-    "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
-  ];
-
   const sealClient = new SealClient({
     suiClient,
-    serverConfigs: serverObjectIds.map((id) => ({
+    serverConfigs: SEAL_SERVER_OBJECT_IDS.map((id) => ({
       objectId: id,
       weight: 1,
     })),

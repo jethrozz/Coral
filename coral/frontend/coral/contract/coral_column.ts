@@ -26,7 +26,8 @@ import {
   queryObjectsByIds,
 } from "@/contract/coral_server";
 import { Transaction } from '@mysten/sui/transactions';
-import { MARKET_ID, GLOBAL_CONFIG_ID } from "@/constants";
+import { MARKET_ID, GLOBAL_CONFIG_ID, RPC_URL } from "@/constants";
+import { SuiClient } from "@mysten/sui/client";
 
 // 获取我的订阅
 export async function getMySubscriptions(
@@ -61,28 +62,25 @@ export async function getMySubscriptions(
       query: queryByAddressAndType,
       variables: { address, type, cursor: endCursor },
     });
-    const subscriptions = parseSubscriptionData(currentPage.data);
+    let subscriptions = parseSubscriptionData(currentPage.data);
     result.push(...subscriptions);
+
     endCursor = currentPage.data?.address?.objects?.pageInfo?.endCursor;
     hasNextPage = currentPage.data?.address?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
 
-  // 收集所有 column_id，批量查询专栏详细信息
-  const columnIds = result.map((sub) => {
-    const columnId = typeof sub.column_id === 'string' ? sub.column_id : (sub.column_id as any)?.id || String(sub.column_id)
-    return columnId
-  }).filter((id) => id && id.length > 0)
-
+  // 收集所有 column_id
+  const columnIds = result.map((sub) => sub.column_id);
+  
+  // 批量获取专栏详细信息
   if (columnIds.length > 0) {
-    // 批量查询专栏详细信息
     const columns = await getColumnsByIds(columnIds)
     const columnMap = new Map<string, ColumnOtherInfo>()
     columns.forEach((col) => {
-      const colId = typeof col.id === 'string' ? col.id : (col.id as any)?.id || String(col.id)
-      columnMap.set(colId, col)
+      columnMap.set(col.id, col)
     })
-
-    // 填充订阅中的 column 信息
+    
+    // 填充每个订阅的专栏信息
     result.forEach((sub) => {
       const columnId = typeof sub.column_id === 'string' ? sub.column_id : (sub.column_id as any)?.id || String(sub.column_id)
       const columnInfo = columnMap.get(columnId)
@@ -95,7 +93,6 @@ export async function getMySubscriptions(
   return result;
 }
 
-// 获取专栏的详细信息（包括更新方式、支付方式、所有期刊等）
 export async function getColumnsByIds(
   ids: string[]
 ): Promise<Array<ColumnOtherInfo>> {
@@ -298,110 +295,100 @@ export async function getUserOwnedInstallments(
       return await getAllInstallmentsByColumnId(columnIdStr, address);
     }
 
-    const json = objects[0].json;
-    let installmentIds: string[] = [];
-
-    // 确保 all_installment 是数组
-    if (json.all_installment && Array.isArray(json.all_installment)) {
-      // 确保所有 ID 都是字符串类型
-      installmentIds = json.all_installment
-        .map((id: any) => String(id).trim())
-        .filter((id: string) => id.length > 0);
-    }
+    const columnJson = objects[0].json;
+    const installmentIds = columnJson.all_installment || [];
 
     if (installmentIds.length === 0) {
-      console.log("getUserOwnedInstallments - 专栏没有期刊");
       return [];
     }
 
-    console.log("getUserOwnedInstallments - 准备查询期刊 IDs:", installmentIds);
-    const installmentObjects = await queryObjectsByIds(installmentIds);
-    console.log("getUserOwnedInstallments - 查询到的期刊对象:", installmentObjects);
+    // 确保所有 ID 都是字符串类型
+    const validInstallmentIds = installmentIds.map((id: any) => {
+      if (typeof id === 'string') {
+        return id.trim();
+      }
+      if (id && typeof id === 'object' && 'id' in id) {
+        return String((id as any).id).trim();
+      }
+      return id != null ? String(id).trim() : "";
+    }).filter((id: string) => id.length > 0);
+
+    console.log("getUserOwnedInstallments - 查询期刊 IDs:", validInstallmentIds);
+
+    // 批量查询所有期刊对象
+    const installmentObjects = await queryObjectsByIds(validInstallmentIds);
     console.log("getUserOwnedInstallments - 查询到的期刊对象数量:", installmentObjects.length);
 
-    const result: Installment[] = [];
+    // 解析期刊对象
+    const installments: Installment[] = [];
     for (const obj of installmentObjects) {
       const json = obj.json;
       if (!json) continue;
 
-      // 确保 ID 是字符串类型
       const installmentId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
       const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
-      
-      // 检查是否属于该专栏（虽然理论上应该都是，但为了安全还是检查一下）
-      const columnIdToMatch = typeof columnId === 'string' ? columnId : (columnId as any)?.id || columnIdStr
-      console.log("getUserOwnedInstallments - 检查期刊:", {
-        id: installmentId,
-        belong_column: belongColumnId,
-        columnId: columnIdToMatch,
-        match: belongColumnId === columnIdToMatch,
-        no: json.no,
-      });
 
-      result.push({
+      installments.push({
         id: installmentId,
         belong_column: belongColumnId,
-        no: parseInt(json.no) || 0,
+        no: json.no || 0,
         files: json.files || [],
         is_published: json.is_published || false,
         published_at: json.published_at,
       });
     }
 
-    console.log("getUserOwnedInstallments - 最终结果:", result);
-    return result;
+    // 按 no 排序
+    installments.sort((a, b) => a.no - b.no);
+
+    return installments;
   } catch (error) {
     console.error("getUserOwnedInstallments 失败:", error);
-    // 如果出错，尝试使用 getAllInstallmentsByColumnId 作为后备方案
-    const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
-    return await getAllInstallmentsByColumnId(columnIdStr, address);
+    throw error;
   }
 }
 
-// 根据专栏 ID 获取所有期刊（通过类型查询）
+// 获取所有期刊（通过 Column 对象查询，不限制用户）
 export async function getAllInstallmentsByColumnId(
   columnId: string,
   address: string
 ): Promise<Array<Installment>> {
   const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
   const result: Installment[] = [];
-
   let endCursor: string | null | undefined = null;
   let hasNextPage = false;
 
   do {
     const currentPage: any = await suiGraphQLClient.query({
       query: getObjectsByType,
-      variables: { type: INSTALLMENT_TYPE, limit: 20, cursor: endCursor },
+      variables: { type: INSTALLMENT_TYPE, cursor: endCursor },
     });
-    const data = currentPage.data;
-    const nodes = data?.objects?.nodes as any[];
-    if (nodes && nodes.length > 0) {
-      for (let i = 0; i < nodes.length; i++) {
-        const json = nodes[i].asMoveObject?.contents?.json;
-        if (json && json.belong_column) {
-          const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
-          const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
-          if (belongColumnId === columnIdStr) {
-            const installmentId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
-            // 避免重复添加
-            if (!result.find((r) => r.id === installmentId)) {
-              result.push({
-                id: installmentId,
-                belong_column: belongColumnId,
-                no: parseInt(json.no) || 0,
-                files: json.files || [],
-                is_published: json.is_published || false,
-                published_at: json.published_at,
-              });
-            }
-          }
-        }
+
+    const edges = currentPage.data?.objects?.edges || [];
+    for (const edge of edges) {
+      const json = edge.node.asMoveObject?.contents?.json;
+      if (!json) continue;
+
+      const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
+      if (belongColumnId === columnId) {
+        const installmentId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+        result.push({
+          id: installmentId,
+          belong_column: belongColumnId,
+          no: json.no || 0,
+          files: json.files || [],
+          is_published: json.is_published || false,
+          published_at: json.published_at,
+        });
       }
     }
-    endCursor = data?.objects?.pageInfo?.endCursor;
-    hasNextPage = data?.objects?.pageInfo?.hasNextPage || false;
+
+    endCursor = currentPage.data?.objects?.pageInfo?.endCursor;
+    hasNextPage = currentPage.data?.objects?.pageInfo?.hasNextPage;
   } while (hasNextPage);
+
+  // 按 no 排序
+  result.sort((a, b) => a.no - b.no);
 
   return result;
 }
@@ -461,174 +448,83 @@ export async function getUserOwnedColumns(
 
   // 去重 column_id
   const uniqueColumnIds = Array.from(new Set(allColumnIds));
-  console.log("getUserOwnedColumns - 收集到的 column_ids:", uniqueColumnIds);
-  console.log("getUserOwnedColumns - ColumnCap 映射数量:", columnCapMap.size);
+  console.log("getUserOwnedColumns - 去重后的专栏 IDs:", uniqueColumnIds.length);
 
-  // 根据 column_id 查询所有 Column 对象的详细信息
+  // 批量获取专栏详细信息
   const columnInfos = await getColumnsByIds(uniqueColumnIds);
-  console.log("getUserOwnedColumns - 查询到的 Column 详细信息数量:", columnInfos.length);
+  console.log("getUserOwnedColumns - 获取到的专栏信息数量:", columnInfos.length);
 
-  // 将 Column 的详细信息填充到 ColumnCap 中
+  // 组合 ColumnCap 和 ColumnOtherInfo
   for (const columnInfo of columnInfos) {
-    // 确保 columnInfo.id 是字符串类型
-    const columnIdStr = typeof columnInfo.id === 'string' ? columnInfo.id : (columnInfo.id as any)?.id || String(columnInfo.id);
-    const columnCap = columnCapMap.get(columnIdStr);
-    if (columnCap) {
-      const fullColumnCap: ColumnCap = {
-        id: columnCap.id!,
-        column_id: columnIdStr,
-        name: columnInfo.name, // 从 Column 对象获取
-        description: columnInfo.desc, // 从 Column 对象获取
-        link: "", // ColumnCap 中可能没有，使用空字符串
-        image_url: columnInfo.cover_img_url, // 从 Column 对象获取
-        project_url: "", // ColumnCap 中可能没有，使用空字符串
-        creator: columnInfo.creator, // 从 Column 对象获取
-        created_at: columnCap.created_at!,
+    const cap = columnCapMap.get(columnInfo.id);
+    if (cap) {
+      result.push({
+        id: cap.id!,
+        column_id: columnInfo.id,
+        created_at: cap.created_at!,
+        name: columnInfo.name,
+        description: columnInfo.desc,
+        link: "",
+        image_url: columnInfo.cover_img_url,
+        project_url: "",
+        creator: columnInfo.creator,
         other: columnInfo, // 完整的 ColumnOtherInfo
-      };
-      result.push(fullColumnCap);
-    } else {
-      console.warn(`getUserOwnedColumns - 未找到对应的 ColumnCap，column_id:`, columnInfo.id, `(类型: ${typeof columnInfo.id})`);
-      console.log(`getUserOwnedColumns - columnCapMap keys:`, Array.from(columnCapMap.keys()));
+      });
     }
   }
 
-  console.log("getUserOwnedColumns - 最终结果数量:", result.length);
   return result;
 }
 
 export async function getAllColumns(): Promise<Array<ColumnOtherInfo>> {
-  try {
-    const urls = [GRAPHQL_URL];
-    let lastError: Error | null = null;
-    const allIds: string[] = [];
+  const suiGraphQLClient = new SuiGraphQLClient({ url: GRAPHQL_URL });
+  const result: ColumnOtherInfo[] = [];
+  let endCursor: string | null | undefined = null;
+  let hasNextPage = false;
+  const allIds: string[] = [];
 
-    for (const url of urls) {
-      try {
-        const suiGraphQLClient = new SuiGraphQLClient({ url });
-        let endCursor: string | null | undefined = null;
-        let hasNextPage = false;
+  do {
+    const currentPage: any = await suiGraphQLClient.query({
+      query: getObjectsByType,
+      variables: { type: COLUMN_TYPE, cursor: endCursor },
+    });
 
-        do {
-          const result: any = await suiGraphQLClient.query({
-            query: getObjectsByType,
-            variables: { type: COLUMN_TYPE, limit: 20, cursor: endCursor },
-          });
-          const data: any = result.data;
-          const nodes = data?.objects?.nodes as any[];
-          if (nodes && nodes.length > 0) {
-            for (let i = 0; i < nodes.length; i++) {
-              const json = nodes[i].asMoveObject?.contents?.json;
-              if (json && json.id) {
-                // 只收集已发布的专栏（status === 1）
-                const status = parseInt(json.status) || 0;
-                if (status === 1) {
-                  const columnId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id);
-                  // 避免重复添加
-                  if (!allIds.includes(columnId)) {
-                    allIds.push(columnId);
-                  }
-                }
-              }
-            }
-          }
-          endCursor = data?.objects?.pageInfo?.endCursor;
-          hasNextPage = data?.objects?.pageInfo?.hasNextPage || false;
-        } while (hasNextPage);
+    // GraphQL 返回的是 nodes 而不是 edges
+    const nodes = currentPage.data?.objects?.nodes || [];
+    console.log("getAllColumns - 获取到的专栏对象:", currentPage);
+    console.log("getAllColumns - nodes 数量:", nodes.length);
 
-        break;
-      } catch (error) {
-        console.error(`GraphQL 端点 ${url} 请求失败:`, error);
-        lastError = error as Error;
-        continue;
+    for (const node of nodes) {
+      const json = node.asMoveObject?.contents?.json;
+      console.log("getAllColumns - 处理节点:", { hasJson: !!json, jsonId: json?.id });
+      if (json && json.id) {
+        const objectId = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+        console.log("getAllColumns - 添加 ID:", objectId);
+        allIds.push(objectId);
       }
     }
 
-    if (allIds.length === 0) {
-      console.log("getAllColumns - 未找到已发布的专栏");
-      return [];
-    }
-
-    console.log(`getAllColumns - 收集到的已发布专栏 IDs: ${allIds.length}`, allIds);
-
-    const columns = await getColumnsByIds(allIds);
-    // 再次过滤确保只返回已发布的专栏
-    const publishedColumns = columns.filter((col) => col.status === 1);
-    console.log(`getAllColumns - 查询到的专栏总数: ${columns.length}, 已发布: ${publishedColumns.length}`);
-    return publishedColumns;
-  } catch (error) {
-    console.error("getAllColumns 失败:", error);
-    throw error;
-  }
+    endCursor = currentPage.data?.objects?.pageInfo?.endCursor;
+    hasNextPage = currentPage.data?.objects?.pageInfo?.hasNextPage;
+  } while (hasNextPage);
+  console.log("getAllColumns - 收集到的专栏 IDs:", allIds.length);
+  // 批量查询所有专栏
+  const columns = await getColumnsByIds(allIds);
+  console.log("getAllColumns - 获取到的专栏信息数量:", columns.length);
+  return columns;
 }
 
-// 根据ID获取单个专栏详细信息
 export async function getColumnById(id: string): Promise<ColumnOtherInfo | null> {
   const columns = await getColumnsByIds([id]);
   return columns.length > 0 ? columns[0] : null;
 }
 
-// 根据ID获取单个期刊详细信息（包括文件列表）
-export async function getOneInstallment(installmentId: string): Promise<InstallmentWithFiles | null> {
-  try {
-    const objects = await queryObjectsByIds([installmentId]);
-    if (objects.length === 0 || !objects[0]?.json) {
-      return null;
-    }
-
-    const json = objects[0].json;
-    const installmentIdStr = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
-    const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
-
-    // 查询文件列表
-    const fileIds: string[] = [];
-    if (json.files && Array.isArray(json.files)) {
-      for (const fileId of json.files) {
-        const id = typeof fileId === 'string' ? fileId : (fileId as any)?.id || String(fileId)
-        if (id) {
-          fileIds.push(id);
-        }
-      }
-    }
-
-    const files: File[] = [];
-    if (fileIds.length > 0) {
-      const fileObjects = await queryObjectsByIds(fileIds);
-      for (const obj of fileObjects) {
-        const fileJson = obj.json;
-        if (!fileJson) continue;
-        const fileId = typeof fileJson.id === 'string' ? fileJson.id : (fileJson.id as any)?.id || String(fileJson.id)
-        files.push({
-          id: fileId,
-          title: fileJson.title || "",
-          blob_id: fileJson.blob_id || "",
-          belong_dir: fileJson.directory_id || fileJson.belong_dir || "",
-          end_epoch: fileJson.end_epoch || 0,
-          created_at: fileJson.created_at ? new Date(parseInt(fileJson.created_at)) : new Date(),
-          updated_at: fileJson.updated_at ? new Date(parseInt(fileJson.updated_at)) : new Date(),
-        });
-      }
-    }
-
-    return {
-      id: installmentIdStr,
-      belong_column: belongColumnId,
-      no: parseInt(json.no) || 0,
-      files: files,
-    };
-  } catch (error) {
-    console.error("getOneInstallment 失败:", error);
-    return null;
-  }
-}
-
-// 添加期刊（支持1-7个文件）
+// 添加期刊（支持多个文件）
 export async function addInstallment({
   columnCapId,
   columnId,
   fileIds,
   packageId,
-  globalConfigId,
   chain,
   signAndExecuteTransaction,
 }: {
@@ -636,142 +532,46 @@ export async function addInstallment({
   columnId: string;
   fileIds: string[];
   packageId: string;
-  globalConfigId: string;
   chain: string;
   signAndExecuteTransaction: any;
 }) {
+  if (fileIds.length === 0) {
+    throw new Error("至少需要一个文件");
+  }
+
+  if (fileIds.length > 7) {
+    throw new Error("最多只能添加7个文件");
+  }
+
   // 确保所有 ID 都是字符串类型
   const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
   const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
-  
-  if (!fileIds || fileIds.length === 0) {
-    throw new Error("至少需要一个文件")
-  }
-  
-  if (fileIds.length > 7) {
-    throw new Error("一个期刊最多只能关联7个文件")
-  }
-
-  // 确保所有文件 ID 都是字符串类型
-  const validFileIds = fileIds.map((id) => {
-    if (typeof id === 'string') return id.trim()
-    if (id && typeof id === 'object' && 'id' in id) {
-      return String((id as any).id).trim()
-    }
-    return String(id).trim()
-  }).filter((id) => id.length > 0)
-
-  if (validFileIds.length === 0) {
-    throw new Error("没有有效的文件 ID")
-  }
+  const fileIdStrs = fileIds.map((id) => typeof id === 'string' ? id : (id as any)?.id || String(id))
 
   const tx = new Transaction();
+
+  // 根据文件数量选择不同的函数
+  const functionName = `add_installment${fileIds.length > 1 ? `_with_${fileIds.length}_files` : ''}`;
   
-  // 根据文件数量调用不同的 Move 函数
-  const fileCount = validFileIds.length
-  const fileObjects = validFileIds.map((id) => tx.object(id))
-  
-  if (fileCount === 1) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment`,
-      arguments: [
-        tx.object(columnCapIdStr), // column_cap: &ColumnCap
-        tx.object(columnIdStr), // column: &mut Column
-        fileObjects[0], // file1: &mut File
-        tx.object("0x6"), // clock: &Clock
-        tx.object(globalConfigId), // global_config: &GlobalConfig
-      ],
-    });
-  } else if (fileCount === 2) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_2_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else if (fileCount === 3) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_3_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        fileObjects[2],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else if (fileCount === 4) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_4_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        fileObjects[2],
-        fileObjects[3],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else if (fileCount === 5) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_5_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        fileObjects[2],
-        fileObjects[3],
-        fileObjects[4],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else if (fileCount === 6) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_6_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        fileObjects[2],
-        fileObjects[3],
-        fileObjects[4],
-        fileObjects[5],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else if (fileCount === 7) {
-    tx.moveCall({
-      target: `${packageId}::coral_market::add_installment_with_7_files`,
-      arguments: [
-        tx.object(columnCapIdStr),
-        tx.object(columnIdStr),
-        fileObjects[0],
-        fileObjects[1],
-        fileObjects[2],
-        fileObjects[3],
-        fileObjects[4],
-        fileObjects[5],
-        fileObjects[6],
-        tx.object("0x6"),
-        tx.object(globalConfigId),
-      ],
-    });
-  } else {
-    throw new Error(`不支持的文件数量: ${fileCount}`)
+  // 构建参数：column_cap, column, file1, file2, ..., clock, global_config
+  const args: any[] = [
+    tx.object(columnCapIdStr),
+    tx.object(columnIdStr),
+  ];
+
+  // 添加文件参数
+  for (const fileId of fileIdStrs) {
+    args.push(tx.object(fileId));
   }
+
+  // 添加 clock 和 global_config
+  args.push(tx.object("0x6")); // clock
+  args.push(tx.object(GLOBAL_CONFIG_ID));
+
+  tx.moveCall({
+    target: `${packageId}::coral_market::${functionName}`,
+    arguments: args,
+  });
 
   return new Promise((resolve, reject) => {
     signAndExecuteTransaction(
@@ -788,12 +588,13 @@ export async function addInstallment({
   });
 }
 
+// 添加文件到期刊
 export async function addFileToInstallment({
   fileId,
   installmentId,
   packageId,
-  signAndExecuteTransaction,
   chain,
+  signAndExecuteTransaction,
 }: {
   fileId: string;
   installmentId: string;
@@ -801,13 +602,16 @@ export async function addFileToInstallment({
   chain: string;
   signAndExecuteTransaction: any;
 }) {
+  const fileIdStr = typeof fileId === 'string' ? fileId : (fileId as any)?.id || String(fileId)
+  const installmentIdStr = typeof installmentId === 'string' ? installmentId : (installmentId as any)?.id || String(installmentId)
+  
   const tx = new Transaction();
   
   tx.moveCall({
-    target: `${packageId}::coral_market::add_file_to_installment`,
+    target: `${packageId}::coral_sync::add_file_to_installment`,
     arguments: [
-      tx.object(fileId), // file: File
-      tx.object(installmentId), // installment: &mut Installment
+      tx.object(fileIdStr),
+      tx.object(installmentIdStr),
     ],
   });
 
@@ -840,7 +644,6 @@ export async function publishColumn({
   chain: string;
   signAndExecuteTransaction: any;
 }) {
-  // 确保所有 ID 都是字符串类型
   const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
   const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
   
@@ -918,6 +721,190 @@ export async function publishInstallment({
   });
 }
 
+// 获取单个期刊详情（包含文件列表）
+export async function getOneInstallment(
+  installmentId: string
+): Promise<InstallmentWithFiles | null> {
+  try {
+    const objects = await queryObjectsByIds([installmentId]);
+    if (objects.length === 0 || !objects[0]?.json) {
+      return null;
+    }
+
+    const json = objects[0].json;
+    const installmentIdStr = typeof json.id === 'string' ? json.id : (json.id as any)?.id || String(json.id)
+    const belongColumnId = typeof json.belong_column === 'string' ? json.belong_column : (json.belong_column as any)?.id || String(json.belong_column)
+
+    const fileIds = json.files || [];
+    const files: File[] = [];
+
+    if (fileIds.length > 0) {
+      const fileObjects = await queryObjectsByIds(fileIds);
+      for (const obj of fileObjects) {
+        const fileJson = obj.json;
+        if (!fileJson) continue;
+
+        const fileId = typeof fileJson.id === 'string' ? fileJson.id : (fileJson.id as any)?.id || String(fileJson.id)
+        const belongDirId = typeof fileJson.belong_dir === 'string' ? fileJson.belong_dir : (fileJson.belong_dir as any)?.id || String(fileJson.belong_dir)
+
+        files.push({
+          id: fileId,
+          title: fileJson.title || "",
+          belong_dir: belongDirId,
+          blob_id: fileJson.blob_id || "",
+          end_epoch: parseInt(fileJson.end_epoch) || 0,
+          created_at: new Date(parseInt(fileJson.created_at)),
+          updated_at: new Date(parseInt(fileJson.updated_at)),
+        });
+      }
+    }
+
+    return {
+      id: installmentIdStr,
+      belong_column: belongColumnId,
+      no: json.no || 0,
+      files: files,
+    };
+  } catch (error) {
+    console.error("getOneInstallment 失败:", error);
+    return null;
+  }
+}
+
+// 获取专栏余额
+export async function getColumnBalance(columnId: string): Promise<number> {
+  const client = new SuiClient({ url: RPC_URL });
+  
+  try {
+    const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+    
+    // 使用 showContent 和 showBcs 选项来获取对象数据
+    const response = await client.getObject({
+      id: columnIdStr,
+      options: {
+        showContent: true,
+        showBcs: true,
+      },
+    });
+
+    if (!response.data || !response.data.content) {
+      return 0;
+    }
+
+    const content = response.data.content;
+    
+    // 方法1: 尝试从 JSON fields 中获取 balance
+    if ('fields' in content && content.fields) {
+      const fields = content.fields as any;
+      
+      // 添加调试日志
+      console.log("Column fields:", Object.keys(fields));
+      console.log("Balance field:", fields.balance);
+      console.log("Balance type:", typeof fields.balance);
+      
+      if (fields.balance !== undefined && fields.balance !== null) {
+        let balanceValue: bigint | null = null;
+        
+        // Balance<SUI> 在 JSON 中可能显示为对象，包含 value 字段
+        if (typeof fields.balance === 'object') {
+          // 尝试多种可能的字段名
+          if ('value' in fields.balance) {
+            balanceValue = BigInt(fields.balance.value || 0);
+          } else if ('fields' in fields.balance && fields.balance.fields && 'value' in fields.balance.fields) {
+            balanceValue = BigInt(fields.balance.fields.value || 0);
+          } else {
+            // 如果对象只有一个数字属性，可能是 value
+            const keys = Object.keys(fields.balance);
+            if (keys.length === 1 && typeof fields.balance[keys[0]] === 'string') {
+              balanceValue = BigInt(fields.balance[keys[0]]);
+            }
+          }
+        } else if (typeof fields.balance === 'string') {
+          // 如果 balance 是字符串格式的数字
+          balanceValue = BigInt(fields.balance);
+        } else if (typeof fields.balance === 'number') {
+          balanceValue = BigInt(fields.balance);
+        }
+        
+        if (balanceValue !== null) {
+          const suiAmount = Number(balanceValue) / 1e9; // 转换为 SUI（精度9位）
+          console.log("解析到的余额:", balanceValue.toString(), "SUI:", suiAmount);
+          return suiAmount;
+        }
+      }
+    }
+
+    // 方法2: 如果 JSON 中没有，尝试从 BCS 解析
+    if (response.data.bcs && typeof response.data.bcs === 'string') {
+      try {
+        // Column 对象的字段顺序：id, update_method, payment_method, name, desc, cover_img_url, 
+        // all_installment, balance, is_rated, status, created_at, updated_at, plan_installment_number, 
+        // subscriptions, creator
+        // Balance 字段在 BCS 中的位置需要根据实际编码确定
+        // 但更简单的方法是查找 balance 字段的 BCS 编码
+        
+        // 使用 @mysten/bcs 库来解码（如果可用）
+        // 或者尝试从 JSON 中获取 balance 字段的索引位置
+        
+        // 简化方案：直接读取整个 BCS，查找 balance 字段
+        // 由于 Column 是共享对象，BCS 编码比较复杂
+        // 我们优先使用 JSON 方式
+      } catch (parseError) {
+        console.error("BCS 解析余额失败:", parseError);
+      }
+    }
+
+    // 如果都失败了，返回 0
+    console.warn("无法从 Column 对象中解析余额，返回 0");
+    return 0;
+  } catch (error) {
+    console.error("获取专栏余额失败:", error);
+    return 0;
+  }
+}
+
+// 专栏管理员提款
+export async function withdrawColumnBalance({
+  columnCapId,
+  columnId,
+  packageId,
+  chain,
+  signAndExecuteTransaction,
+}: {
+  columnCapId: string;
+  columnId: string;
+  packageId: string;
+  chain: string;
+  signAndExecuteTransaction: any;
+}) {
+  const columnCapIdStr = typeof columnCapId === 'string' ? columnCapId : (columnCapId as any)?.id || String(columnCapId)
+  const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
+  
+  const tx = new Transaction();
+  
+  tx.moveCall({
+    target: `${packageId}::coral_market::column_admin_withdraw`,
+    arguments: [
+      tx.object(columnCapIdStr), // column_cap: &ColumnCap
+      tx.object(columnIdStr), // column: &mut Column
+    ],
+  });
+
+  return new Promise((resolve, reject) => {
+    signAndExecuteTransaction(
+      { transaction: tx, chain },
+      {
+        onSuccess: (result: any) => {
+          resolve(result);
+        },
+        onError: (error: any) => {
+          reject(error);
+        },
+      }
+    );
+  });
+}
+
 // 订阅专栏
 export async function subscribeColumn({
   columnId,
@@ -932,46 +919,61 @@ export async function subscribeColumn({
   chain: string;
   signAndExecuteTransaction: any;
 }) {
-  // 确保所有 ID 都是字符串类型
   const columnIdStr = typeof columnId === 'string' ? columnId : (columnId as any)?.id || String(columnId)
   const paymentMethodIdStr = typeof paymentMethodId === 'string' ? paymentMethodId : (paymentMethodId as any)?.id || String(paymentMethodId)
   
-  // 先查询 PaymentMethod 获取 fee
-  const paymentMethodObjects = await queryObjectsByIds([paymentMethodIdStr])
-  if (paymentMethodObjects.length === 0) {
-    throw new Error("未找到支付方式")
+  // 获取 payment_method 和 market 对象以计算费用
+  const client = new SuiClient({ url: RPC_URL });
+  const [paymentMethodObj, marketObj] = await Promise.all([
+    client.getObject({
+      id: paymentMethodIdStr,
+      options: { showContent: true },
+    }),
+    client.getObject({
+      id: MARKET_ID,
+      options: { showContent: true },
+    }),
+  ]);
+
+  if (!paymentMethodObj.data || !marketObj.data) {
+    throw new Error("无法获取支付方式或市场信息");
   }
-  const paymentMethod = paymentMethodObjects[0].json
-  const feeAmount = BigInt(paymentMethod.fee) // fee 已经是最小单位（10^9）
-  
-  // 查询 Market 获取 cut 值（假设 cut 是 500，即 5%）
-  // 为了简化，我们假设 cut 是 5%（500/10000）
-  // 如果需要精确值，可以查询 Market 对象
-  const MARKET_CUT = 500 // 5% = 500/10000
-  const cutFeeAmount = (feeAmount * BigInt(MARKET_CUT)) / BigInt(10000)
-  const subFeeAmount = feeAmount - cutFeeAmount
-  
+
+  const paymentMethodFields = (paymentMethodObj.data.content as any)?.fields;
+  const marketFields = (marketObj.data.content as any)?.fields;
+
+  if (!paymentMethodFields || !marketFields) {
+    throw new Error("无法解析支付方式或市场信息");
+  }
+
+  // 获取费用和手续费比例
+  const totalFee = BigInt(paymentMethodFields.fee || 0);
+  const marketCut = BigInt(marketFields.cut || 1500); // 默认 15% (1500/10000)
+
+  // 计算手续费和订阅费
+  // cut_fee = totalFee * marketCut / 10000
+  // fee = totalFee - cut_fee
+  const cutFee = (totalFee * marketCut) / BigInt(10000);
+  const subFee = totalFee - cutFee;
+
   const tx = new Transaction();
+
+  // 获取 gas coin 并拆分为两个 coin
+  const splitResult = tx.splitCoins(tx.gas, [cutFee, subFee]);
   
-  // 拆分 SUI coin：先获取总金额，然后拆分为手续费和订阅费
-  // 用户需要支付的总金额是 feeAmount
-  // splitCoins 返回数组，第一个元素是拆分出的 coin
-  const [totalCoin] = tx.splitCoins(tx.gas, [feeAmount])
-  
-  // 从 totalCoin 中拆分出手续费
-  // splitCoins 会从源 coin 中移除指定金额，所以 totalCoin 剩余的就是 subFeeAmount
-  const [cutFeeCoin] = tx.splitCoins(totalCoin, [cutFeeAmount])
-  // totalCoin 现在剩余的就是 subFeeAmount，直接使用它作为订阅费
-  const subFeeCoin = totalCoin
-  
+  // 第一个拆分出的 coin 作为手续费
+  const cutFeeCoin = splitResult[0];
+  // 第二个拆分出的 coin 作为订阅费
+  const feeCoin = splitResult[1];
+
   tx.moveCall({
     target: `${packageId}::coral_market::subscription_column`,
     arguments: [
       tx.object(MARKET_ID), // market: &mut Market
       tx.object(columnIdStr), // column: &mut Column
       tx.object(paymentMethodIdStr), // payment_method: &PaymentMethod
-      subFeeCoin, // fee: Coin<SUI> (订阅费)
-      cutFeeCoin, // cut_fee: Coin<SUI> (手续费)
+      feeCoin, // fee: Coin<SUI>
+      cutFeeCoin, // cut_fee: Coin<SUI>
       tx.object("0x6"), // clock: &Clock
       tx.object(GLOBAL_CONFIG_ID), // global_config: &GlobalConfig
     ],

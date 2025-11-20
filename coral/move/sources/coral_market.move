@@ -13,8 +13,9 @@ module coral::coral_market {
         id: UID
     }
 
-    public struct Market has key, store{
+    public struct Market has key {
         id: UID,
+        admin_cap_id: ID, // 管理员权限 ID，用于验证提取资金权限
         cut: u64, //非买断手续费 10000 = 100% 
         balance: Balance<SUI>, //余额
     }
@@ -25,7 +26,7 @@ module coral::coral_market {
         support_pay_type: vector<u8>, //支持的支付类型
     }
 
-    public struct ColumnCap has key, store{
+    public struct ColumnCap has key{
         id: UID,
         created_at: u64,
         column_id: ID,
@@ -113,6 +114,7 @@ module coral::coral_market {
     fun init(otw: CORAL_MARKET, ctx: &mut TxContext) {
         //创建管理员权限
         let admin = CoralAdminCap { id: object::new(ctx) };
+        let admin_cap_id = object::id(&admin);
         transfer::public_transfer(admin, ctx.sender());
 
         //创建市场配置
@@ -161,7 +163,7 @@ module coral::coral_market {
             transfer::public_transfer(publisher, ctx.sender());
             transfer::public_transfer(display, ctx.sender());
         //千分之1.5%
-        let market = Market { id: object::new(ctx), cut: 15, balance: balance::zero()};
+        let market = Market { id: object::new(ctx), admin_cap_id, cut: 15, balance: balance::zero()};
         transfer::share_object(market);
     }
 
@@ -254,7 +256,7 @@ module coral::coral_market {
             creator: ctx.sender().to_string(),
         };
 
-        transfer::public_transfer(col_cap, ctx.sender());
+        transfer::transfer(col_cap, ctx.sender());
         transfer::share_object(column);
     }
     //修改基本信息
@@ -647,9 +649,11 @@ module coral::coral_market {
 
     
     public entry fun admin_withdraw(
-        _admin: &CoralAdminCap,
+        admin: &CoralAdminCap,
         market: &mut Market,
         ctx: &mut TxContext){
+            // 验证管理员权限：确保传入的 CoralAdminCap 是 Market 中记录的有效管理员
+            assert!(object::id(admin) == market.admin_cap_id, ENoAccess);
             let balance = market.balance.withdraw_all();
             let coin  = coin::from_balance(balance, ctx);
             transfer::public_transfer(coin, ctx.sender());

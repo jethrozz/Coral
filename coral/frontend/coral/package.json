@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:mainnet": "NEXT_PUBLIC_ENV=mainnet next dev",
     "build": "next build",
+    "build:testnet": "NEXT_PUBLIC_ENV=testnet next build",
+    "build:mainnet": "NEXT_PUBLIC_ENV=mainnet next build",
     "start": "next start",
     "lint": "eslint ."
   },

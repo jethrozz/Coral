@@ -50,15 +50,11 @@ export default function SubscriptionsPage() {
     }
   }
 
-  const handleCancelSubscription = async (id: string, title: string) => {
-    // TODO: 实现区块链取消订阅交易
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    setSubscriptions(subscriptions.filter((sub) => sub.id !== id))
-
+  const handleRenewSubscription = async (subscription: Subscription) => {
+    // TODO: 实现续费功能
     toast({
-      title: t("subscriptions.cancelled"),
-      description: t("subscriptions.cancelledDesc").replace("{title}", title),
+      title: t("subscriptions.renewing") || "续费中",
+      description: t("subscriptions.renewingDesc") || "正在处理续费请求...",
     })
   }
 
@@ -118,98 +114,73 @@ export default function SubscriptionsPage() {
               </div>
             </Card>
           ) : subscriptions.length > 0 ? (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 justify-items-center">
               {subscriptions.map((subscription) => {
                 const column = subscription.column
-                // subscription_time 在合约中是毫秒数，需要转换为天数用于计算
-                const subscriptionTimeMs = column.payment_method?.subscription_time || 30 * 86400000
-                const subscriptionTimeDays = Math.round(subscriptionTimeMs / 86400000)
-                const nextPayment = getNextPaymentDate(subscription.sub_start_time, subscriptionTimeDays)
+                const paymentMethod = column.payment_method
+                const payType = paymentMethod?.pay_type ?? 2
+                
+                // 计算到期日期或下次支付日期
+                const getExpiryOrNextPayment = () => {
+                  if (payType === 0) {
+                    // 买断：不需要续费，显示永久有效
+                    return null
+                  }
+                  
+                  const timeMs = paymentMethod?.subscription_time || 30 * 86400000
+                  const timeDays = Math.round(timeMs / 86400000)
+                  const expiryDate = getNextPaymentDate(subscription.sub_start_time, timeDays)
+                  
+                  if (payType === 1) {
+                    // 质押：显示到期日期
+                    return { date: expiryDate, label: t("subscriptions.expiresOn") || "到期日期" }
+                  } else {
+                    // 订阅：显示下次支付日期
+                    return { date: expiryDate, label: t("subscriptions.nextBilling") }
+                  }
+                }
+
+                const expiryOrNextPayment = getExpiryOrNextPayment()
 
                 return (
-                  <Card key={subscription.id} className="flex flex-col hover:border-primary transition-all duration-300">
-                    <CardHeader className="space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <Badge variant="secondary">
-                          {t("subscriptions.column")}
-                        </Badge>
-                        <div className="text-sm">
-                          <span className="font-bold">{column.payment_method?.fee || 0} SUI</span>
-                          <span className="text-muted-foreground">/{t("common.month")}</span>
-                        </div>
-                      </div>
-
+                  <Card key={subscription.id} className="flex flex-col hover:shadow-lg hover:border-primary transition-all duration-300 aspect-[4/3] border-border/50 bg-card w-full max-w-[331px]">
+                    <CardHeader className="space-y-2.5 pb-3">
                       <Link href={`/column/${column.id}`} className="hover:text-accent transition-colors">
-                        <h3 className="text-xl font-bold text-balance">{column.name || "未知专栏"}</h3>
+                        <h3 className="text-xl font-bold leading-tight text-balance text-foreground">{column.name || "未知专栏"}</h3>
                       </Link>
                     </CardHeader>
 
-                    <CardContent className="flex-1 space-y-4">
-                      {/* Description */}
-                      <p className="text-sm text-muted-foreground line-clamp-2">{column.desc || ""}</p>
-
-                      {/* Author */}
-                      {column.creator && (
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`h-10 w-10 rounded-full ${getAddressColor(column.creator)} flex items-center justify-center text-white text-sm font-mono font-semibold flex-shrink-0`}
-                          >
-                            {formatAddress(column.creator, 4).slice(-4)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-muted-foreground font-mono truncate">
-                              {column.creator.slice(0, 8)}...{column.creator.slice(-6)}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Column Stats */}
-                      <div className="p-3 rounded-lg bg-muted/50">
-                        <div className={`grid gap-2 text-sm ${SHOW_SUBSCRIPTION_STATS ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                          {SHOW_SUBSCRIPTION_STATS && (
-                            <div>
-                              <p className="text-muted-foreground">{t("subscriptions.subscribers")}</p>
-                              <p className="font-medium">{column.subscriptions}</p>
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-muted-foreground">{t("subscriptions.issues")}</p>
-                            <p className="font-medium">
-                              {column.all_installment.filter((i) => i.is_published).length}/{column.plan_installment_number}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Subscription Info */}
-                      <div className="space-y-2 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          <span>
-                            {t("subscriptions.subscribedOn")} {formatDate(subscription.created_at)}
+                    <CardContent className="flex-1 pb-3">
+                      {/* 到期时间 */}
+                      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <Calendar className="h-4 w-4 shrink-0 text-primary/70" />
+                        {payType === 0 ? (
+                          <span className="text-green-600 dark:text-green-400">
+                            {t("subscriptions.permanentAccess")}
                           </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
+                        ) : expiryOrNextPayment ? (
                           <span>
-                            {t("subscriptions.nextBilling")} {formatDate(nextPayment)}
+                            {expiryOrNextPayment.label} {formatDate(expiryOrNextPayment.date)}
                           </span>
-                        </div>
+                        ) : null}
                       </div>
                     </CardContent>
 
-                    <CardFooter className="flex gap-3">
-                      <Button variant="outline" className="flex-1 bg-transparent" asChild>
-                        <Link href={`/column/${column.id}`}>{t("subscriptions.viewColumn")}</Link>
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        className="flex-1"
-                        onClick={() => handleCancelSubscription(subscription.id, column.name)}
-                      >
-                        {t("subscriptions.cancelSubscription")}
-                      </Button>
+                    <CardFooter className="pt-3 border-t border-border/50 bg-muted/30">
+                      <div className={`flex items-center justify-between w-full gap-3 ${payType === 2 ? '' : 'justify-center'}`}>
+                        <Button variant="outline" size="sm" className={payType === 2 ? "flex-1" : "w-full"} asChild>
+                          <Link href={`/column/${column.id}`}>{t("subscriptions.viewColumn")}</Link>
+                        </Button>
+                        {payType === 2 && (
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => handleRenewSubscription(subscription)}
+                          >
+                            {t("subscriptions.renew")}
+                          </Button>
+                        )}
+                      </div>
                     </CardFooter>
                   </Card>
                 )

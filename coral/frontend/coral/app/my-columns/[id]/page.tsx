@@ -17,7 +17,9 @@ import {
   addInstallment,
   addFileToInstallment,
   publishInstallment,
-  getOneInstallment
+  getOneInstallment,
+  getColumnBalance,
+  withdrawColumnBalance
 } from "@/contract/coral_column"
 import { getUserOwnDirectory, getUserOwnFile } from "@/contract/coral_server"
 import type { ColumnCap, Installment, Directory, File, InstallmentWithFiles } from "@/shared/data"
@@ -32,7 +34,9 @@ import {
   Eye,
   EyeOff,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Wallet,
+  ArrowDownCircle
 } from "lucide-react"
 
 export default function ColumnManagePage() {
@@ -62,6 +66,9 @@ export default function ColumnManagePage() {
   const [browsingInstallment, setBrowsingInstallment] = useState<InstallmentWithFiles | null>(null)
   const [isBrowsingInstallment, setIsBrowsingInstallment] = useState(false)
   const [isLoadingInstallment, setIsLoadingInstallment] = useState(false)
+  const [columnBalance, setColumnBalance] = useState<number>(0)
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false)
 
   // 加载专栏信息
   useEffect(() => {
@@ -69,6 +76,13 @@ export default function ColumnManagePage() {
       loadColumn()
     }
   }, [currentAccount?.address, columnId])
+
+  // 加载专栏余额
+  useEffect(() => {
+    if (column?.column_id) {
+      loadBalance()
+    }
+  }, [column?.column_id])
 
   // 加载期刊列表
   useEffect(() => {
@@ -120,6 +134,63 @@ export default function ColumnManagePage() {
         description: "加载期刊失败",
         variant: "destructive",
       })
+    }
+  }
+
+  const loadBalance = async () => {
+    if (!column?.column_id) return
+    
+    setIsLoadingBalance(true)
+    try {
+      const balance = await getColumnBalance(column.column_id)
+      setColumnBalance(balance)
+    } catch (error) {
+      console.error("加载余额失败:", error)
+    } finally {
+      setIsLoadingBalance(false)
+    }
+  }
+
+  const handleWithdraw = async () => {
+    if (!column || !currentAccount?.address) return
+    
+    if (columnBalance <= 0) {
+      toast({
+        title: t("myColumns.noBalance") || "无余额",
+        description: t("myColumns.noBalanceDesc") || "当前专栏没有可提取的余额",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsWithdrawing(true)
+    try {
+      await withdrawColumnBalance({
+        columnCapId: column.id,
+        columnId: column.column_id,
+        packageId,
+        chain,
+        signAndExecuteTransaction,
+      })
+
+      toast({
+        title: t("myColumns.withdrawSuccess") || "提款成功",
+        description: (t("myColumns.withdrawSuccessDesc") || "成功提取 {amount} SUI").replace("{amount}", columnBalance.toFixed(4)),
+      })
+
+      // 重新加载余额
+      setTimeout(() => {
+        loadBalance()
+      }, 2000)
+    } catch (error: any) {
+      console.error("提款失败:", error)
+      toast({
+        title: t("myColumns.withdrawFailed") || "提款失败",
+        description: error.message || t("myColumns.withdrawFailedDesc") || "提款操作失败，请重试",
+        variant: "destructive",
+      })
+    } finally {
+      setIsWithdrawing(false)
     }
   }
 
@@ -263,7 +334,6 @@ export default function ColumnManagePage() {
         columnId: column.column_id,
         fileIds: selectedFiles,
         packageId,
-        globalConfigId,
         chain,
         signAndExecuteTransaction,
       })
@@ -452,6 +522,42 @@ export default function ColumnManagePage() {
                 </div>
               </div>
             </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Wallet className="h-5 w-5 text-primary" />
+                  <div>
+                    <div className="text-sm text-muted-foreground">
+                      {t("myColumns.availableBalance") || "可提取余额"}
+                    </div>
+                    <div className="text-2xl font-bold">
+                      {isLoadingBalance ? (
+                        <Loader2 className="h-6 w-6 animate-spin" />
+                      ) : (
+                        `${columnBalance.toFixed(4)} SUI`
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleWithdraw}
+                  disabled={isWithdrawing || isLoadingBalance || columnBalance <= 0}
+                  className="gap-2"
+                >
+                  {isWithdrawing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("myColumns.withdrawing") || "提款中..."}
+                    </>
+                  ) : (
+                    <>
+                      <ArrowDownCircle className="h-4 w-4" />
+                      {t("myColumns.withdraw") || "提取"}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
           </Card>
 
           {/* 操作栏 */}
