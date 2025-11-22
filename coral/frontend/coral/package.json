@@ -8,6 +8,9 @@
     "build": "next build",
     "build:testnet": "NEXT_PUBLIC_ENV=testnet next build",
     "build:mainnet": "NEXT_PUBLIC_ENV=mainnet next build",
+    "build:static": "next build",
+    "build:static:testnet": "NEXT_PUBLIC_ENV=testnet next build",
+    "build:static:mainnet": "NEXT_PUBLIC_ENV=mainnet next build",
     "start": "next start",
     "lint": "eslint ."
   },

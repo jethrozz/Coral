@@ -1,0 +1,5 @@
+# Netlify 重定向配置
+# 将所有请求回退到 index.html，由客户端路由处理
+
+/*    /index.html   200
+

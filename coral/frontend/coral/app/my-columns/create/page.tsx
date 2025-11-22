@@ -169,7 +169,7 @@ export default function CreateColumnPage() {
       // 将 signAndExecuteTransaction 包装为 Promise，等待交易完成
       await new Promise<void>((resolve, reject) => {
         signAndExecuteTransaction(
-          { transaction: tx, chain },
+          { transaction: tx as any, chain },
           {
             onSuccess: (result) => {
               console.log("Create successful:", result.digest);
