@@ -1,9 +1,9 @@
 {
   "buildCommand": "pnpm build:testnet",
+  "installCommand": "npm install -g pnpm@8.15.0 && pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
   "env": {
-    "NEXT_PUBLIC_ENV": "testnet",
-    "ENABLE_EXPERIMENTAL_COREPACK": "1"
+    "NEXT_PUBLIC_ENV": "testnet"
   }
 }
 
