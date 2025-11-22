@@ -169,16 +169,16 @@ export default function SubscriptionsPage() {
                     <CardFooter className="pt-3 border-t border-border/50 bg-muted/30">
                       <div className={`flex items-center justify-between w-full gap-3 ${payType === 2 ? '' : 'justify-center'}`}>
                         <Button variant="outline" size="sm" className={payType === 2 ? "flex-1" : "w-full"} asChild>
-                          <Link href={`/column/${column.id}`}>{t("subscriptions.viewColumn")}</Link>
-                        </Button>
+                        <Link href={`/column/${column.id}`}>{t("subscriptions.viewColumn")}</Link>
+                      </Button>
                         {payType === 2 && (
-                          <Button
+                      <Button
                             size="sm"
-                            className="flex-1"
+                        className="flex-1"
                             onClick={() => handleRenewSubscription(subscription)}
-                          >
+                      >
                             {t("subscriptions.renew")}
-                          </Button>
+                      </Button>
                         )}
                       </div>
                     </CardFooter>

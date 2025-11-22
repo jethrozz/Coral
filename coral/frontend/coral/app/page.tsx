@@ -119,20 +119,20 @@ export default function HomePage() {
 
             {mounted ? (
               <Tabs value={activeCategory} onValueChange={setActiveCategory} className="w-full">
-                <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
-                  {categories.map((category) => (
-                    <TabsTrigger
-                      key={category}
-                      value={category}
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      {category}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
+              <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
                 {categories.map((category) => (
-                  <TabsContent key={category} value={category} className="mt-8">
+                  <TabsTrigger
+                    key={category}
+                    value={category}
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
+                  >
+                    {category}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+
+              {categories.map((category) => (
+                <TabsContent key={category} value={category} className="mt-8">
                   {loading ? (
                     <div className="text-center py-12">
                       <p className="text-muted-foreground">
@@ -152,9 +152,9 @@ export default function HomePage() {
                       ))}
                     </div>
                   )}
-                  </TabsContent>
-                ))}
-              </Tabs>
+                </TabsContent>
+              ))}
+            </Tabs>
             ) : (
               // 服务器端渲染时的占位符，避免 hydration 不匹配
               <div className="mt-8">
