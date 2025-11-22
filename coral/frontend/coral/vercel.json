@@ -1,0 +1,8 @@
+{
+  "buildCommand": "pnpm build:mainnet",
+  "framework": "nextjs",
+  "env": {
+    "NEXT_PUBLIC_ENV": "mainnet"
+  }
+}
+
