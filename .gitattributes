@@ -603,3 +603,4 @@
 *.png filter=lfs diff=lfs merge=binary -text
 *.bak filter=lfs diff=lfs merge=binary -text
 
+coral/frontend/coral/public/logo-coral.png -filter -diff -merge -text
